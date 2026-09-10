@@ -40,6 +40,8 @@ export interface UAV {
   charging_status?: 'IDLE' | 'MOVING_TO_CHARGER' | 'WAITING_FOR_CHARGER' | 'CHARGING' | 'FULLY_CHARGED';
   current_action?: string;
   queue_position?: number | null;
+  low_battery_handled?: boolean;
+  low_battery_ack_pending?: boolean;
 }
 
 export interface Task {
@@ -78,6 +80,17 @@ export interface ReplanningEventDetails {
   new_route?: [number, number][];
 }
 
+export interface LowBatteryAlert {
+  robot_id: string;
+  robot_name?: string;
+  battery: number;
+  task_id?: string | null;
+  task_name?: string | null;
+  replacement_id?: string;
+  timestamp: string;
+  reason?: string;
+}
+
 export interface MissionState {
   mission: {
     id: string;
@@ -101,6 +114,7 @@ export interface MissionState {
   recent_events: MissionEvent[];
   last_replanning_event?: ReplanningEventDetails | null;
   charging_station?: ChargingStation;
+  pending_acknowledgement?: LowBatteryAlert | null;
 }
 
 export interface MLMetrics {

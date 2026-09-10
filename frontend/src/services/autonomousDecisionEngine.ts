@@ -1,14 +1,8 @@
-import { MissionState, UAV, Task, Obstacle, ChargingStation, MissionEvent } from '../types';
+import { MissionState, UAV, Task, Obstacle, ChargingStation, MissionEvent, LowBatteryAlert } from '../types';
 
 export const LOW_BATTERY_THRESHOLD = 10;
 export const CHARGING_STATION_COORDS = { x: 25, y: 25 };
 export const CHARGING_SPEED_PER_STEP = 5.0; // Rapid battery recharge for crisp hackathon demo
-
-export interface HandoverLogEntry {
-  timestamp: string;
-  message: string;
-  type: 'BATTERY_ALERT' | 'HANDOVER' | 'CHARGER_DOCK' | 'QUEUE_UPDATE' | 'CHARGE_COMPLETE';
-}
 
 export const INITIAL_CHARGING_STATION: ChargingStation = {
   id: 'CS-ALPHA',
@@ -43,7 +37,9 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     risk_probability: 14.2,
     charging_status: 'IDLE',
     current_action: 'Executing Survey Mission TASK-001',
-    queue_position: null
+    queue_position: null,
+    low_battery_handled: false,
+    low_battery_ack_pending: false
   },
   {
     id: 'Robot 2',
@@ -67,7 +63,9 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     risk_probability: 8.5,
     charging_status: 'IDLE',
     current_action: 'Sector Patrol TASK-002',
-    queue_position: null
+    queue_position: null,
+    low_battery_handled: false,
+    low_battery_ack_pending: false
   },
   {
     id: 'Robot 3',
@@ -91,7 +89,9 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     risk_probability: 12.0,
     charging_status: 'IDLE',
     current_action: 'Perimeter Monitor TASK-003',
-    queue_position: null
+    queue_position: null,
+    low_battery_handled: false,
+    low_battery_ack_pending: false
   },
   {
     id: 'Robot 4',
@@ -115,7 +115,9 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     risk_probability: 4.0,
     charging_status: 'IDLE',
     current_action: 'Standby in Fleet Pool (Ready for Handover)',
-    queue_position: null
+    queue_position: null,
+    low_battery_handled: false,
+    low_battery_ack_pending: false
   },
   {
     id: 'Robot 5',
@@ -139,7 +141,9 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     risk_probability: 5.0,
     charging_status: 'IDLE',
     current_action: 'Standby in Fleet Pool',
-    queue_position: null
+    queue_position: null,
+    low_battery_handled: false,
+    low_battery_ack_pending: false
   }
 ];
 
@@ -155,7 +159,6 @@ export const DEFAULT_DEMO_OBSTACLES: Obstacle[] = [
   { id: 'OBS-03', x: 8, y: 24, width: 6, height: 10 }
 ];
 
-// Helper: Simple A* or direct waypoint interpolator avoiding obstacles
 export function calculateRoute(start: [number, number], end: [number, number], obstacles: Obstacle[] = []): [number, number][] {
   const points: [number, number][] = [start];
   const dx = end[0] - start[0];
@@ -172,12 +175,10 @@ export function calculateRoute(start: [number, number], end: [number, number], o
   return points;
 }
 
-/**
- * Autonomous Decision Engine & State Machine
- */
 export class AutonomousDecisionEngine {
   /**
-   * Evaluates battery thresholds, executes task handovers, and manages charging queue.
+   * Evaluates simulation state, movement, and progressive charging.
+   * STRICT GUARD: Low battery events trigger ONE acknowledgement modal and will NEVER loop.
    */
   public static processSimulationStep(prevState: MissionState): MissionState {
     const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
@@ -196,96 +197,56 @@ export class AutonomousDecisionEngine {
       if (events.length > 50) events.pop();
     };
 
-    // Ensure charging station exists
     if (!state.charging_station) {
       state.charging_station = { ...INITIAL_CHARGING_STATION };
     }
     const charger = state.charging_station;
 
-    // 1. BATTERY MONITOR & LOW BATTERY HANDOVER PIPELINE
-    const workingRobots = state.uavs.filter(
-      (u) => (u.status === 'WORKING' || u.status === 'ASSIGNED' || u.status === 'EN_ROUTE') && u.battery <= LOW_BATTERY_THRESHOLD
-    );
+    // 1. PER-ROBOT BATTERY MONITOR WITH STRICT ONE-TIME EVENT GUARD
+    for (const bot of state.uavs) {
+      const isLow = bot.battery <= LOW_BATTERY_THRESHOLD;
+      const isNotInChargingFlow =
+        bot.status !== 'CHARGING' &&
+        bot.status !== 'MOVING_TO_CHARGER' &&
+        bot.status !== 'WAITING_FOR_CHARGER';
 
-    for (const lowBot of workingRobots) {
-      const originalTask = state.tasks.find((t) => t.id === lowBot.current_task_id && t.status !== 'COMPLETED');
-      
-      log(
-        'BATTERY_CRITICAL',
-        `⚠️ Low Battery Detected: ${lowBot.id}`,
-        `[${now}] ${lowBot.id} battery dropped to ${lowBot.battery.toFixed(1)}% (Threshold <= ${LOW_BATTERY_THRESHOLD}%). Initiating emergency protocol.`
-      );
+      // Detect transition to low battery requiring ONE-TIME acknowledgement
+      if (isLow && !bot.low_battery_handled && !bot.low_battery_ack_pending && isNotInChargingFlow) {
+        bot.low_battery_ack_pending = true;
+        bot.status = 'AWAITING_ACK';
+        bot.current_action = 'Low Battery Emergency (<= 10%) - Awaiting Acknowledgment';
 
-      // Transition Low Battery Robot
-      lowBot.status = 'LOW_BATTERY';
-      lowBot.charging_status = 'MOVING_TO_CHARGER';
-      lowBot.current_action = 'Emergency transit to Charging Station';
+        const task = state.tasks.find((t) => t.id === bot.current_task_id && t.status !== 'COMPLETED');
 
-      // Safe Task Handover: Find Best Available Replacement Robot (Prioritizing Robot 4 for the demo)
-      if (originalTask) {
-        let replacement = state.uavs.find(
+        // Identify suggested replacement candidate
+        let replacementCandidate = state.uavs.find(
           (u) => u.id === 'Robot 4' && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
         );
-        if (!replacement) {
-          replacement = state.uavs.find(
-            (u) => u.id !== lowBot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
+        if (!replacementCandidate) {
+          replacementCandidate = state.uavs.find(
+            (u) => u.id !== bot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
           );
         }
 
-        if (replacement) {
-          const abandonedTaskId = originalTask.id;
-          lowBot.current_task_id = null;
+        // Set the active modal state for this robot (ONE MODAL ONLY)
+        state.pending_acknowledgement = {
+          robot_id: bot.id,
+          robot_name: bot.name || bot.id,
+          battery: bot.battery,
+          task_id: task?.id || null,
+          task_name: task?.name || null,
+          replacement_id: replacementCandidate?.id || 'Standby Robot',
+          timestamp: now,
+          reason: `${bot.id} reached battery threshold (${bot.battery.toFixed(1)}%). Requires charging station dispatch.`
+        };
 
-          // Assign Replacement Robot
-          replacement.status = 'WORKING';
-          replacement.current_task_id = abandonedTaskId;
-          replacement.target_x = originalTask.x;
-          replacement.target_y = originalTask.y;
-          replacement.route = calculateRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
-          replacement.route_index = 0;
-          replacement.current_action = `Taking over ${lowBot.id}'s task (${originalTask.name})`;
-
-          // Update Task Assignment
-          originalTask.assigned_uav_id = replacement.id;
-          originalTask.status = 'REASSIGNED';
-
-          state.replanning_count = (state.replanning_count || 0) + 1;
-          state.prevented_failures = (state.prevented_failures || 0) + 1;
-
-          log(
-            'TASK_HANDOVER',
-            `🔄 Task Handover: ${lowBot.id} ➔ ${replacement.id}`,
-            `[${now}] Task ${abandonedTaskId} (${originalTask.name}) safely transferred from ${lowBot.id} to ${replacement.id}. Unrelated robots remain uninterrupted.`,
-            { old_robot: lowBot.id, new_robot: replacement.id, task_id: abandonedTaskId }
-          );
-
-          state.last_replanning_event = {
-            type: 'PREDICTIVE_REPLANNING',
-            title: `⚡ Low Battery Handover: ${lowBot.id} ➔ ${replacement.id}`,
-            task_id: abandonedTaskId,
-            task_name: originalTask.name,
-            old_uav_id: lowBot.id,
-            old_uav_risk: 94.5,
-            new_uav_id: replacement.id,
-            new_uav_risk: 8.2,
-            reason: `${lowBot.id} reached battery threshold (${lowBot.battery}%). ${replacement.id} dispatched to maintain mission continuity.`,
-            old_feature_contributions: { battery: 0.85, distance: 0.1, comms: 0.05 }
-          };
-        }
+        log(
+          'BATTERY_ALERT_TRIGGERED',
+          `⚠️ Low Battery Alert: ${bot.id}`,
+          `[${now}] ${bot.id} battery reached ${bot.battery.toFixed(1)}%. One-time acknowledgement modal generated.`,
+          { robot_id: bot.id, battery: bot.battery }
+        );
       }
-
-      // Route low battery robot to charging station
-      lowBot.target_x = charger.x;
-      lowBot.target_y = charger.y;
-      lowBot.route = calculateRoute([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
-      lowBot.route_index = 0;
-      lowBot.status = 'MOVING_TO_CHARGER';
-
-      log(
-        'ROUTED_TO_CHARGER',
-        `🔋 ${lowBot.id} Routed to Charging Station`,
-        `[${now}] ${lowBot.id} calculating collision-free route to CHARGING STATION at (${charger.x}, ${charger.y}).`
-      );
     }
 
     // 2. MOVEMENT & CHARGING STATION LOGIC
@@ -299,8 +260,8 @@ export class AutonomousDecisionEngine {
 
         // Normal battery drain during movement
         if (bot.status !== 'CHARGING' && bot.status !== 'WAITING_FOR_CHARGER') {
-          bot.battery = Math.max(0, Math.round((bot.battery - 0.5) * 10) / 10);
-          bot.total_energy_consumed = Math.round((bot.total_energy_consumed + 0.5) * 10) / 10;
+          bot.battery = Math.max(0, Math.round((bot.battery - 0.4) * 10) / 10);
+          bot.total_energy_consumed = Math.round((bot.total_energy_consumed + 0.4) * 10) / 10;
         }
 
         // Reached destination
@@ -321,7 +282,7 @@ export class AutonomousDecisionEngine {
               log(
                 'CHARGING_STARTED',
                 `⚡ ${bot.id} Started Charging`,
-                `[${now}] ${bot.id} reached Charging Station. Charger pad acquired. Charging from ${bot.battery.toFixed(1)}%...`
+                `[${now}] ${bot.id} docked at Charging Station. Fast recharge in progress from ${bot.battery.toFixed(1)}%...`
               );
             } else if (charger.currently_charging_uav_id !== bot.id) {
               // Charger is OCCUPIED -> Enter FIFO Queue
@@ -331,11 +292,11 @@ export class AutonomousDecisionEngine {
               bot.status = 'WAITING_FOR_CHARGER';
               bot.charging_status = 'WAITING_FOR_CHARGER';
               bot.queue_position = charger.queue.indexOf(bot.id) + 1;
-              bot.current_action = `In Queue (Position #${bot.queue_position}) waiting for charger`;
+              bot.current_action = `In FIFO Queue (Position #${bot.queue_position}) waiting for dock`;
               log(
                 'CHARGING_QUEUED',
-                `⏳ ${bot.id} Joined Charging Queue`,
-                `[${now}] Charging Station occupied by ${charger.currently_charging_uav_id}. ${bot.id} placed in FIFO Queue at position #${bot.queue_position}.`
+                `⏳ ${bot.id} Entered Charging Queue`,
+                `[${now}] Charging Station occupied by ${charger.currently_charging_uav_id}. ${bot.id} joined FIFO Queue at position #${bot.queue_position}.`
               );
             }
           }
@@ -347,7 +308,7 @@ export class AutonomousDecisionEngine {
               task.completed_at = now;
               bot.status = 'AVAILABLE';
               bot.current_task_id = null;
-              bot.current_action = `Successfully completed ${task.name}. Standing by.`;
+              bot.current_action = `Completed ${task.name}. Standing by in pool.`;
               log(
                 'TASK_COMPLETED',
                 `✅ Task Completed: ${task.name}`,
@@ -361,18 +322,20 @@ export class AutonomousDecisionEngine {
       // 3. PROGRESSIVE CHARGING (10% -> 20% -> 30% ... -> 100%)
       if (bot.status === 'CHARGING') {
         bot.battery = Math.min(100, Math.round((bot.battery + CHARGING_SPEED_PER_STEP) * 10) / 10);
-        bot.current_action = `Charging in progress: ${bot.battery.toFixed(0)}% (Fast DC Rapid Charge)`;
+        bot.current_action = `Charging: ${bot.battery.toFixed(0)}% (Fast DC Rapid Charge)`;
 
         if (bot.battery >= 100) {
           // Charging Complete!
           bot.battery = 100;
           bot.status = 'AVAILABLE';
           bot.charging_status = 'FULLY_CHARGED';
+          bot.low_battery_handled = false; // Reset lock for FUTURE low battery episodes
+          bot.low_battery_ack_pending = false;
           bot.current_action = 'Fully Charged (100%) - Returned to Available Pool';
           log(
             'CHARGING_COMPLETE',
             `🟢 ${bot.id} Fully Charged (100%)`,
-            `[${now}] ${bot.id} reached 100% capacity. Safely released from charger dock to Available Pool.`
+            `[${now}] ${bot.id} reached 100% capacity. Released from dock to Available Pool.`
           );
 
           // Release Charger & Advance FIFO Queue
@@ -387,7 +350,7 @@ export class AutonomousDecisionEngine {
                 nextBot.status = 'CHARGING';
                 nextBot.charging_status = 'CHARGING';
                 nextBot.queue_position = null;
-                nextBot.current_action = 'Advancing from queue: Charging in progress';
+                nextBot.current_action = 'Advanced from queue: Charging in progress';
                 log(
                   'QUEUE_ADVANCED',
                   `⚡ ${nextBot.id} Moved from Queue to Charger`,
@@ -414,28 +377,134 @@ export class AutonomousDecisionEngine {
   }
 
   /**
-   * Instantly injects Low Battery = 10% on Robot 1 for crisp 1-click Hackathon presentation.
+   * Executes the one-time user acknowledgement:
+   * 1. Closes the alert permanently for this event.
+   * 2. Marks the specific robot as acknowledged & handled.
+   * 3. Selects replacement robot and transfers active task without data loss.
+   * 4. Dispatches low battery robot toward charging station.
+   */
+  public static acknowledgeLowBatteryEvent(prevState: MissionState, robotId: string): MissionState {
+    const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
+    const now = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const events: MissionEvent[] = [...(state.recent_events || [])];
+
+    const log = (type: string, title: string, desc: string, details?: any) => {
+      events.unshift({
+        mission_id: state.mission?.id || 'DEMO',
+        event_type: type,
+        title,
+        description: desc,
+        details,
+        timestamp: now
+      });
+      if (events.length > 50) events.pop();
+    };
+
+    const lowBot = state.uavs.find((u) => u.id === robotId);
+    if (!lowBot) return state;
+
+    // Guard against rapid duplicate clicks
+    if (lowBot.low_battery_handled && !lowBot.low_battery_ack_pending) {
+      state.pending_acknowledgement = null;
+      return state;
+    }
+
+    // 1. Mark event handled on this specific robot
+    lowBot.low_battery_ack_pending = false;
+    lowBot.low_battery_handled = true;
+    lowBot.status = 'MOVING_TO_CHARGER';
+    lowBot.charging_status = 'MOVING_TO_CHARGER';
+    lowBot.current_action = 'Emergency transit to Charging Station';
+
+    // Clear active pending modal
+    state.pending_acknowledgement = null;
+
+    if (!state.charging_station) {
+      state.charging_station = { ...INITIAL_CHARGING_STATION };
+    }
+    const charger = state.charging_station;
+
+    // 2. SAFE TASK HANDOVER
+    const originalTask = state.tasks.find((t) => t.id === lowBot.current_task_id && t.status !== 'COMPLETED');
+    if (originalTask) {
+      let replacement = state.uavs.find(
+        (u) => u.id === 'Robot 4' && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
+      );
+      if (!replacement) {
+        replacement = state.uavs.find(
+          (u) => u.id !== lowBot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
+        );
+      }
+
+      if (replacement) {
+        const abandonedTaskId = originalTask.id;
+        lowBot.current_task_id = null;
+
+        // Assign Replacement Robot
+        replacement.status = 'WORKING';
+        replacement.current_task_id = abandonedTaskId;
+        replacement.target_x = originalTask.x;
+        replacement.target_y = originalTask.y;
+        replacement.route = calculateRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
+        replacement.route_index = 0;
+        replacement.current_action = `Taking over ${lowBot.id}'s task (${originalTask.name})`;
+
+        // Update Task Assignment
+        originalTask.assigned_uav_id = replacement.id;
+        originalTask.status = 'REASSIGNED';
+
+        state.replanning_count = (state.replanning_count || 0) + 1;
+        state.prevented_failures = (state.prevented_failures || 0) + 1;
+
+        log(
+          'TASK_HANDOVER_ACKNOWLEDGED',
+          `🔄 Task Handover: ${lowBot.id} ➔ ${replacement.id}`,
+          `[${now}] User acknowledged low battery on ${lowBot.id}. Task ${abandonedTaskId} (${originalTask.name}) transferred to ${replacement.id}. Other robots continue normally.`,
+          { old_robot: lowBot.id, new_robot: replacement.id, task_id: abandonedTaskId }
+        );
+      }
+    }
+
+    // 3. ROUTE LOW BATTERY ROBOT TO CHARGING STATION
+    lowBot.target_x = charger.x;
+    lowBot.target_y = charger.y;
+    lowBot.route = calculateRoute([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
+    lowBot.route_index = 0;
+
+    log(
+      'ROUTED_TO_CHARGER',
+      `🔋 ${lowBot.id} Routed to Charging Station`,
+      `[${now}] ${lowBot.id} in transit to Charging Station at (${charger.x}, ${charger.y}).`
+    );
+
+    state.recent_events = events;
+    return state;
+  }
+
+  /**
+   * Instantly sets Robot 1 battery = 10% for crisp 1-click Hackathon presentation.
    */
   public static triggerDemoRobot1LowBattery(prevState: MissionState): MissionState {
     const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
     const robot1 = state.uavs.find((u) => u.id === 'Robot 1' || u.id === 'UAV-01');
     if (robot1) {
       robot1.battery = 10.0;
-      robot1.current_action = 'Low Battery (10%) Injected';
+      robot1.low_battery_handled = false; // Trigger new event
+      robot1.low_battery_ack_pending = false;
     }
     return AutonomousDecisionEngine.processSimulationStep(state);
   }
 
   /**
-   * Instantly injects Low Battery on Robot 5 to demonstrate the FIFO Charging Queue behind Robot 1.
+   * Instantly sets Robot 5 battery low to demonstrate the FIFO Charging Queue behind Robot 1.
    */
   public static triggerDemoChargingQueue(prevState: MissionState): MissionState {
     const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
     const robot5 = state.uavs.find((u) => u.id === 'Robot 5' || u.id === 'UAV-05');
     if (robot5) {
       robot5.battery = 8.0;
-      robot5.status = 'LOW_BATTERY';
-      robot5.current_action = 'Emergency Battery Warning (8%)';
+      robot5.low_battery_handled = false;
+      robot5.low_battery_ack_pending = false;
     }
     return AutonomousDecisionEngine.processSimulationStep(state);
   }
@@ -473,7 +542,8 @@ export class AutonomousDecisionEngine {
           timestamp: new Date().toLocaleTimeString('en-US', { hour12: false })
         }
       ],
-      last_replanning_event: null
+      last_replanning_event: null,
+      pending_acknowledgement: null
     };
   }
 }

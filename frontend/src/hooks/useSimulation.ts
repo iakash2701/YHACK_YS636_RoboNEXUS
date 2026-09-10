@@ -13,7 +13,6 @@ export function useSimulation() {
   const [isPlaying, setIsPlaying] = useState<boolean>(true); // Auto-active for hackathon demo
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [replanningNotification, setReplanningNotification] = useState<any | null>(null);
 
   const speedIntervalRef = useRef<number>(1000);
   const timerRef = useRef<any>(null);
@@ -144,19 +143,9 @@ export function useSimulation() {
   const tickStep = useCallback(async () => {
     if (!missionState) return;
 
-    // Use our autonomous decision engine for seamless deterministic simulation
+    // Run tick through AutonomousDecisionEngine
     const updated = AutonomousDecisionEngine.processSimulationStep(missionState);
     setMissionState(updated);
-
-    // Check if predictive replanning just triggered
-    if (updated.last_replanning_event && updated.last_replanning_event !== missionState.last_replanning_event) {
-      setReplanningNotification(updated.last_replanning_event);
-    }
-
-    // Auto-pause if all tasks completed
-    if (updated.tasks.every(t => t.status === 'COMPLETED') && updated.status === 'RUNNING') {
-      // Keep running so charging animations can continue smoothly
-    }
   }, [missionState]);
 
   // Simulation Loop
@@ -191,7 +180,6 @@ export function useSimulation() {
     setIsPlaying(true);
     const reset = AutonomousDecisionEngine.createInitial5RobotMission();
     setMissionState(reset);
-    setReplanningNotification(null);
   };
 
   const handleReplanNow = async () => {
@@ -204,15 +192,19 @@ export function useSimulation() {
     // comparison static or calculated
   };
 
+  // ONE-TIME ACKNOWLEDGEMENT HANDLER
+  const handleAcknowledgeLowBattery = useCallback((robotId: string) => {
+    if (!missionState) return;
+    const updated = AutonomousDecisionEngine.acknowledgeLowBatteryEvent(missionState, robotId);
+    setMissionState(updated);
+  }, [missionState]);
+
   // 1-Click Hackathon Demo Triggers
   const simulateRobot1LowBattery = () => {
     if (!missionState) return;
     setIsPlaying(true);
     const updated = AutonomousDecisionEngine.triggerDemoRobot1LowBattery(missionState);
     setMissionState(updated);
-    if (updated.last_replanning_event) {
-      setReplanningNotification(updated.last_replanning_event);
-    }
   };
 
   const simulateChargingQueue = () => {
@@ -222,20 +214,20 @@ export function useSimulation() {
     setMissionState(updated);
   };
 
-  // What-If Triggers
+  // What-If Triggers with per-robot reset on manual change
   const triggerLowBattery = async (uavId: string, battery: number = 10) => {
     if (!missionState) return;
     const stateCopy = JSON.parse(JSON.stringify(missionState)) as MissionState;
     const target = stateCopy.uavs.find(u => u.id === uavId);
     if (target) {
       target.battery = battery;
-      target.current_action = `Low Battery (${battery}%) Injected`;
+      // Reset lock on manual battery change so it triggers ONE acknowledgement alert
+      target.low_battery_handled = false;
+      target.low_battery_ack_pending = false;
+      target.current_action = `Manual Low Battery (${battery}%) Injected`;
     }
     const updated = AutonomousDecisionEngine.processSimulationStep(stateCopy);
     setMissionState(updated);
-    if (updated.last_replanning_event) {
-      setReplanningNotification(updated.last_replanning_event);
-    }
   };
 
   const triggerCommLoss = async (uavId: string, comm: number = 15) => {
@@ -285,8 +277,7 @@ export function useSimulation() {
     isPlaying,
     loading,
     error,
-    replanningNotification,
-    setReplanningNotification,
+    handleAcknowledgeLowBattery,
     handlePlanMission,
     handleStartSimulation,
     handlePauseSimulation,

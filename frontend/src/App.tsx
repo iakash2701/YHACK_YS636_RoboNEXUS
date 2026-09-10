@@ -13,7 +13,7 @@ import { MissionTimeline } from './components/MissionTimeline';
 import { ComparisonPanel } from './components/ComparisonPanel';
 import { MLMetricsPanel } from './components/MLMetricsPanel';
 import { AnalyticsCharts } from './components/AnalyticsCharts';
-import { ReplanningNotificationModal } from './components/ReplanningNotificationModal';
+import { LowBatteryAcknowledgementModal } from './components/LowBatteryAcknowledgementModal';
 import { MissionConfigModal } from './components/MissionConfigModal';
 import { PresetScenariosModal } from './components/PresetScenariosModal';
 import { MissionExportModal } from './components/MissionExportModal';
@@ -44,8 +44,7 @@ export function App() {
     isPlaying,
     loading,
     error,
-    replanningNotification,
-    setReplanningNotification,
+    handleAcknowledgeLowBattery,
     handlePlanMission,
     handleStartSimulation,
     handlePauseSimulation,
@@ -68,15 +67,16 @@ export function App() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'control' | 'analytics' | 'evaluation' | 'ml'>('control');
 
-  // Trigger sound effect on replanning notification
+
+  // Trigger sound effect on low battery acknowledgement alert
   React.useEffect(() => {
-    if (replanningNotification) {
+    if (missionState?.pending_acknowledgement) {
       tacticalAudio.playAlertBeep('critical');
       tacticalAudio.speak(
-        `Low battery emergency detected on ${replanningNotification.old_uav_id}. Autonomous task handover engaged. Dispatched ${replanningNotification.new_uav_id}.`
+        `Low battery alert. ${missionState.pending_acknowledgement.robot_id} has reached 10 percent battery. Operator acknowledgement required.`
       );
     }
-  }, [replanningNotification]);
+  }, [missionState?.pending_acknowledgement?.robot_id]);
 
   if (loading && !missionState) {
     return (
@@ -434,10 +434,15 @@ export function App() {
         )}
       </main>
 
-      {/* Prominent Replanning Notification Modal */}
-      <ReplanningNotificationModal
-        event={replanningNotification}
-        onClose={() => setReplanningNotification(null)}
+      {/* Dedicated Low Battery Operator Acknowledgement Modal */}
+      <LowBatteryAcknowledgementModal
+        alert={missionState?.pending_acknowledgement || null}
+        onAcknowledge={handleAcknowledgeLowBattery}
+        onClose={() => {
+          if (missionState?.pending_acknowledgement) {
+            handleAcknowledgeLowBattery(missionState.pending_acknowledgement.robot_id);
+          }
+        }}
       />
 
       {/* Preset Scenarios Modal */}
