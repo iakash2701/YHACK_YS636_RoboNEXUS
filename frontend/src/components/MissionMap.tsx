@@ -350,35 +350,7 @@ export const MissionMap: React.FC<MissionMapProps> = ({
             </g>
           </g>
 
-          {/* Base Dock Stations for Individual Robots */}
-          {uavs.map((uav) => (
-            <g key={`base-${uav.id}`}>
-              <rect
-                x={uav.base_x * scale - 12}
-                y={uav.base_y * scale - 12}
-                width="24"
-                height="24"
-                fill="#0f172a"
-                stroke="#38bdf8"
-                strokeWidth="1.2"
-                rx="4"
-              />
-              <path
-                d={`M ${uav.base_x * scale - 2} ${uav.base_y * scale - 6} L ${uav.base_x * scale - 5} ${uav.base_y * scale} L ${uav.base_x * scale} ${uav.base_y * scale} L ${uav.base_x * scale - 3} ${uav.base_y * scale + 6} L ${uav.base_x * scale + 5} ${uav.base_y * scale - 1} L ${uav.base_x * scale} ${uav.base_y * scale - 1} Z`}
-                fill="#38bdf8"
-              />
-              <text
-                x={uav.base_x * scale - 10}
-                y={uav.base_y * scale + 20}
-                fill="#64748b"
-                fontSize="8"
-                fontFamily="monospace"
-                fontWeight="bold"
-              >
-                {uav.id.replace('Robot ', 'R')} PAD
-              </text>
-            </g>
-          ))}
+
 
           {/* Planned Routes */}
           {showRoutes &&
