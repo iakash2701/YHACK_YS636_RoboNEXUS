@@ -17,9 +17,11 @@ DEFAULT_DEMO_OBSTACLES = [
 ]
 
 DEFAULT_DEMO_UAVS = [
-    {"id": "UAV-01", "x": 2.0, "y": 2.0, "base_x": 2.0, "base_y": 2.0, "battery": 45.0, "health": 92.0, "communication": 88.0, "speed": 1.0},
-    {"id": "UAV-02", "x": 10.0, "y": 5.0, "base_x": 10.0, "base_y": 5.0, "battery": 90.0, "health": 98.0, "communication": 95.0, "speed": 1.2},
-    {"id": "UAV-03", "x": 5.0, "y": 10.0, "base_x": 5.0, "base_y": 10.0, "battery": 70.0, "health": 85.0, "communication": 90.0, "speed": 1.0}
+    {"id": "Robot 1", "x": 4.0, "y": 6.0, "base_x": 4.0, "base_y": 6.0, "battery": 45.0, "health": 95.0, "communication": 92.0, "speed": 1.0, "status": "WORKING"},
+    {"id": "Robot 2", "x": 12.0, "y": 6.0, "base_x": 12.0, "base_y": 6.0, "battery": 90.0, "health": 98.0, "communication": 95.0, "speed": 1.2, "status": "WORKING"},
+    {"id": "Robot 3", "x": 6.0, "y": 16.0, "base_x": 6.0, "base_y": 16.0, "battery": 75.0, "health": 88.0, "communication": 90.0, "speed": 1.0, "status": "WORKING"},
+    {"id": "Robot 4", "x": 8.0, "y": 2.0, "base_x": 8.0, "base_y": 2.0, "battery": 96.0, "health": 99.0, "communication": 98.0, "speed": 1.1, "status": "AVAILABLE"},
+    {"id": "Robot 5", "x": 2.0, "y": 12.0, "base_x": 2.0, "base_y": 12.0, "battery": 88.0, "health": 94.0, "communication": 92.0, "speed": 1.0, "status": "AVAILABLE"}
 ]
 
 DEFAULT_DEMO_TASKS = [

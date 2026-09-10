@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UAV, Task, Obstacle } from '../types';
+import { UAV, Task, Obstacle, ChargingStation } from '../types';
 import {
   Crosshair,
   MapPin,
@@ -9,12 +9,15 @@ import {
   Layers,
   Bot,
   Zap,
+  BatteryCharging,
+  Clock,
 } from 'lucide-react';
 
 interface MissionMapProps {
   uavs: UAV[];
   tasks: Task[];
   obstacles: Obstacle[];
+  chargingStation?: ChargingStation;
   weather?: string;
   mapWidth?: number;
   mapHeight?: number;
@@ -28,6 +31,7 @@ export const MissionMap: React.FC<MissionMapProps> = ({
   uavs,
   tasks,
   obstacles,
+  chargingStation = { id: 'CS-ALPHA', name: 'CHARGING STATION', x: 25, y: 25, currently_charging_uav_id: null, queue: [] },
   weather = 'NORMAL',
   mapWidth = 50,
   mapHeight = 50,
@@ -45,7 +49,10 @@ export const MissionMap: React.FC<MissionMapProps> = ({
 
   const getRobotColor = (uav: UAV) => {
     if (uav.status === 'FAILED') return '#f43f5e';
-    if (uav.battery < 25) return '#f43f5e'; // Charger down
+    if (uav.status === 'CHARGING') return '#10b981';
+    if (uav.status === 'WAITING_FOR_CHARGER') return '#a855f7';
+    if (uav.status === 'MOVING_TO_CHARGER' || uav.status === 'LOW_BATTERY' || uav.battery <= 10) return '#f43f5e';
+    if (uav.battery < 25) return '#f59e0b';
     if (uav.risk_level === 'HIGH') return '#f43f5e';
     if (uav.risk_level === 'MEDIUM') return '#f59e0b';
     return '#00f0ff';
@@ -72,6 +79,9 @@ export const MissionMap: React.FC<MissionMapProps> = ({
     }
   };
 
+  const csX = chargingStation.x * scale;
+  const csY = chargingStation.y * scale;
+
   return (
     <div className="glass-panel rounded-xl p-4 flex flex-col h-full relative overflow-hidden font-mono text-xs">
       {/* Map Header */}
@@ -79,7 +89,7 @@ export const MissionMap: React.FC<MissionMapProps> = ({
         <div className="flex items-center gap-2">
           <Bot className="w-5 h-5 text-cyan-400 animate-bounce" />
           <h2 className="text-xs font-semibold text-slate-200 uppercase tracking-wider">
-            Autonomous Robot Grid & Tactical Airspace (50 × 50)
+            Autonomous 5-Robot Fleet Grid & Tactical Airspace (50 × 50)
           </h2>
         </div>
 
@@ -136,7 +146,7 @@ export const MissionMap: React.FC<MissionMapProps> = ({
       </div>
 
       {/* SVG Map Canvas */}
-      <div className="relative flex-1 min-h-[440px] bg-[#050811] rounded-lg border border-cyan-500/20 overflow-hidden grid-bg flex items-center justify-center">
+      <div className="relative flex-1 min-h-[460px] bg-[#050811] rounded-lg border border-cyan-500/20 overflow-hidden grid-bg flex items-center justify-center">
         <svg
           viewBox="0 0 1000 1000"
           className="w-full h-full max-h-[580px] cursor-crosshair"
@@ -152,9 +162,20 @@ export const MissionMap: React.FC<MissionMapProps> = ({
               <feComposite in="SourceGraphic" in2="blur" operator="over" />
             </filter>
 
+            <filter id="stationGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="10" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+
             <radialGradient id="threatGlow" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.4" />
               <stop offset="60%" stopColor="#f59e0b" stopOpacity="0.2" />
+              <stop offset="100%" stopColor="#050811" stopOpacity="0" />
+            </radialGradient>
+
+            <radialGradient id="chargerGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#00f0ff" stopOpacity="0.4" />
+              <stop offset="60%" stopColor="#10b981" stopOpacity="0.2" />
               <stop offset="100%" stopColor="#050811" stopOpacity="0" />
             </radialGradient>
           </defs>
@@ -218,38 +239,148 @@ export const MissionMap: React.FC<MissionMapProps> = ({
             </g>
           ))}
 
-          {/* Base Charger Dock Stations */}
-          {uavs.map((uav) => (
-            <g key={`base-${uav.id}`}>
+          {/* ========================================================= */}
+          {/* ⚡ CENTRAL CHARGING STATION (Clearly Visible on Map) */}
+          {/* ========================================================= */}
+          <g
+            transform={`translate(${csX}, ${csY})`}
+            onMouseEnter={() =>
+              setHoveredEntity({
+                type: 'station',
+                data: chargingStation
+              })
+            }
+            onMouseLeave={() => setHoveredEntity(null)}
+            className="cursor-pointer"
+          >
+            {/* Background Halo */}
+            <circle r="60" fill="url(#chargerGlow)" />
+
+            {/* Pulsing Outer Charge Radar Ring */}
+            <circle
+              r="44"
+              fill="none"
+              stroke="#00f0ff"
+              strokeWidth="1.5"
+              strokeDasharray="6 4"
+              className="animate-spin"
+              style={{ transformOrigin: '0 0', animationDuration: '10s' }}
+            />
+
+            {/* Inner Docking Platform */}
+            <rect
+              x="-34"
+              y="-34"
+              width="68"
+              height="68"
+              rx="12"
+              fill="#061226"
+              stroke={chargingStation.currently_charging_uav_id ? '#10b981' : '#00f0ff'}
+              strokeWidth="2.5"
+              filter="url(#stationGlow)"
+            />
+
+            {/* Lightning Charging Bolt Icon */}
+            <path
+              d="M -4 -16 L -16 2 L -2 2 L -8 18 L 16 -2 L 2 -2 L 8 -16 Z"
+              fill={chargingStation.currently_charging_uav_id ? '#10b981' : '#f59e0b'}
+              className={chargingStation.currently_charging_uav_id ? 'animate-pulse' : ''}
+            />
+
+            {/* Charging Pad Core Ring */}
+            <circle
+              r="22"
+              fill="none"
+              stroke={chargingStation.currently_charging_uav_id ? '#10b981' : '#00f0ff'}
+              strokeWidth="1.5"
+            />
+
+            {/* Banner Labels */}
+            <g transform="translate(0, 48)">
+              {/* Main Badge Background */}
               <rect
-                x={uav.base_x * scale - 14}
-                y={uav.base_y * scale - 14}
-                width="28"
-                height="28"
-                fill="#0f172a"
-                stroke="#00f0ff"
-                strokeWidth="1.5"
+                x="-95"
+                y="0"
+                width="190"
+                height="46"
                 rx="6"
-              />
-              {/* Charger icon symbol */}
-              <path
-                d={`M ${uav.base_x * scale - 2} ${uav.base_y * scale - 7} L ${uav.base_x * scale - 6} ${uav.base_y * scale} L ${uav.base_x * scale} ${uav.base_y * scale} L ${uav.base_x * scale - 4} ${uav.base_y * scale + 7} L ${uav.base_x * scale + 6} ${uav.base_y * scale - 1} L ${uav.base_x * scale} ${uav.base_y * scale - 1} Z`}
-                fill="#00f0ff"
+                fill="#030816"
+                stroke={chargingStation.currently_charging_uav_id ? '#10b981' : '#00f0ff'}
+                strokeWidth="1.5"
+                opacity="0.95"
               />
               <text
-                x={uav.base_x * scale - 12}
-                y={uav.base_y * scale + 24}
+                x="0"
+                y="15"
+                textAnchor="middle"
                 fill="#38bdf8"
-                fontSize="9"
+                fontSize="11"
+                fontFamily="monospace"
+                fontWeight="900"
+                letterSpacing="1"
+              >
+                ⚡ CHARGING STATION
+              </text>
+              <text
+                x="0"
+                y="29"
+                textAnchor="middle"
+                fill={chargingStation.currently_charging_uav_id ? '#34d399' : '#94a3b8'}
+                fontSize="9.5"
                 fontFamily="monospace"
                 fontWeight="bold"
               >
-                DOCK
+                {chargingStation.currently_charging_uav_id
+                  ? `Charging: ${chargingStation.currently_charging_uav_id}`
+                  : 'Status: DOCK AVAILABLE'}
+              </text>
+              <text
+                x="0"
+                y="41"
+                textAnchor="middle"
+                fill={chargingStation.queue && chargingStation.queue.length > 0 ? '#f59e0b' : '#64748b'}
+                fontSize="8.5"
+                fontFamily="monospace"
+                fontWeight="bold"
+              >
+                {chargingStation.queue && chargingStation.queue.length > 0
+                  ? `Queue: ${chargingStation.queue.join(', ')} (${chargingStation.queue.length} waiting)`
+                  : 'Queue: Empty'}
+              </text>
+            </g>
+          </g>
+
+          {/* Base Dock Stations for Individual Robots */}
+          {uavs.map((uav) => (
+            <g key={`base-${uav.id}`}>
+              <rect
+                x={uav.base_x * scale - 12}
+                y={uav.base_y * scale - 12}
+                width="24"
+                height="24"
+                fill="#0f172a"
+                stroke="#38bdf8"
+                strokeWidth="1.2"
+                rx="4"
+              />
+              <path
+                d={`M ${uav.base_x * scale - 2} ${uav.base_y * scale - 6} L ${uav.base_x * scale - 5} ${uav.base_y * scale} L ${uav.base_x * scale} ${uav.base_y * scale} L ${uav.base_x * scale - 3} ${uav.base_y * scale + 6} L ${uav.base_x * scale + 5} ${uav.base_y * scale - 1} L ${uav.base_x * scale} ${uav.base_y * scale - 1} Z`}
+                fill="#38bdf8"
+              />
+              <text
+                x={uav.base_x * scale - 10}
+                y={uav.base_y * scale + 20}
+                fill="#64748b"
+                fontSize="8"
+                fontFamily="monospace"
+                fontWeight="bold"
+              >
+                {uav.id.replace('Robot ', 'R')} PAD
               </text>
             </g>
           ))}
 
-          {/* Planned A* Routes */}
+          {/* Planned Routes */}
           {showRoutes &&
             uavs.map((uav) => {
               if (!uav.route || uav.route.length < 2) return null;
@@ -264,8 +395,8 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                     fill="none"
                     stroke={color}
                     strokeWidth={isSelected ? '3.5' : '2'}
-                    strokeDasharray={uav.status === 'RETURNING' ? '6 6' : 'none'}
-                    opacity={isSelected ? 0.95 : 0.6}
+                    strokeDasharray={uav.status === 'MOVING_TO_CHARGER' || uav.status === 'RETURNING' ? '6 6' : 'none'}
+                    opacity={isSelected ? 0.95 : 0.65}
                     filter={isSelected ? 'url(#glow)' : undefined}
                   />
                 </g>
@@ -302,7 +433,7 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                   x="14"
                   y="4"
                   fill="#f8fafc"
-                  fontSize="12"
+                  fontSize="11"
                   fontFamily="monospace"
                   fontWeight="bold"
                   className="pointer-events-none drop-shadow"
@@ -313,11 +444,15 @@ export const MissionMap: React.FC<MissionMapProps> = ({
             );
           })}
 
-          {/* Autonomous Robot Avatars (Custom High-Tech Robot Vector Icon) */}
+          {/* ========================================================= */}
+          {/* 🤖 5-ROBOT FLEET AVATARS (With Dynamic Status & Charging) */}
+          {/* ========================================================= */}
           {uavs.map((uav) => {
             const color = getRobotColor(uav);
             const isSelected = uav.id === selectedUAVId;
-            const isLowCharger = uav.battery < 25;
+            const isLowBattery = uav.battery <= 10 || uav.status === 'LOW_BATTERY' || uav.status === 'MOVING_TO_CHARGER';
+            const isCharging = uav.status === 'CHARGING';
+            const isQueued = uav.status === 'WAITING_FOR_CHARGER';
 
             return (
               <g
@@ -334,7 +469,7 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                 {/* Selection Reticle */}
                 {isSelected && (
                   <circle
-                    r="24"
+                    r="26"
                     fill="none"
                     stroke="#00f0ff"
                     strokeWidth="2"
@@ -344,10 +479,33 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                   />
                 )}
 
-                {/* Robot Pulse Aura on Low Charger Warning */}
-                {isLowCharger && (
+                {/* ⚡ Charging Animation Ring Effect */}
+                {isCharging && (
+                  <g>
+                    <circle
+                      r="28"
+                      fill="none"
+                      stroke="#10b981"
+                      strokeWidth="2.5"
+                      strokeDasharray="8 4"
+                      className="animate-spin"
+                      style={{ transformOrigin: '0 0', animationDuration: '3s' }}
+                    />
+                    <circle
+                      r="32"
+                      fill="none"
+                      stroke="#34d399"
+                      strokeWidth="1"
+                      className="animate-ping"
+                      style={{ transformOrigin: '0 0' }}
+                    />
+                  </g>
+                )}
+
+                {/* Low Battery Warning Pulse */}
+                {isLowBattery && (
                   <circle
-                    r="22"
+                    r="24"
                     fill="none"
                     stroke="#f43f5e"
                     strokeWidth="2"
@@ -356,39 +514,34 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                   />
                 )}
 
-                {/* Robot Base Chassis Circle */}
+                {/* Robot Base Chassis */}
                 <circle
                   r="16"
                   fill="#0b1329"
                   stroke={color}
                   strokeWidth="2.5"
-                  filter={isSelected ? 'url(#glow)' : undefined}
+                  filter={isSelected || isCharging ? 'url(#glow)' : undefined}
                 />
 
                 {/* Custom Vector Robot Graphic */}
                 <g transform="translate(-10, -10)">
-                  {/* Robot Head Body */}
                   <rect x="2" y="4" width="16" height="13" rx="3" fill="#0d1b38" stroke={color} strokeWidth="1.5" />
-                  {/* Glowing Eyes */}
-                  <circle cx="7" cy="9" r="1.8" fill={isLowCharger ? '#f43f5e' : color} />
-                  <circle cx="13" cy="9" r="1.8" fill={isLowCharger ? '#f43f5e' : color} />
-                  {/* Mouth/Mouth Line */}
+                  <circle cx="7" cy="9" r="1.8" fill={isLowBattery ? '#f43f5e' : isCharging ? '#10b981' : color} />
+                  <circle cx="13" cy="9" r="1.8" fill={isLowBattery ? '#f43f5e' : isCharging ? '#10b981' : color} />
                   <line x1="6" y1="13.5" x2="14" y2="13.5" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
-                  {/* Antenna */}
                   <line x1="10" y1="4" x2="10" y2="1" stroke={color} strokeWidth="1.5" />
-                  <circle cx="10" cy="1" r="1.5" fill={isLowCharger ? '#f43f5e' : '#00f0ff'} />
-                  {/* Ear Nodes */}
+                  <circle cx="10" cy="1" r="1.5" fill={isLowBattery ? '#f43f5e' : isCharging ? '#10b981' : '#00f0ff'} />
                   <rect x="0" y="7" width="2" height="4" rx="1" fill={color} />
                   <rect x="18" y="7" width="2" height="4" rx="1" fill={color} />
                 </g>
 
-                {/* Robot ID & Battery / Charger Tag */}
-                <g transform="translate(20, -12)">
+                {/* Status Badge & Battery Tag */}
+                <g transform="translate(20, -14)">
                   <rect
                     x="0"
                     y="0"
-                    width="78"
-                    height="30"
+                    width="96"
+                    height="32"
                     fill="#0a0f1d"
                     stroke={color}
                     strokeWidth="1"
@@ -408,12 +561,13 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                   <text
                     x="6"
                     y="25"
-                    fill={isLowCharger ? '#f43f5e' : uav.battery < 50 ? '#fbbf24' : '#34d399'}
+                    fill={isCharging ? '#34d399' : isLowBattery ? '#f43f5e' : uav.battery < 40 ? '#fbbf24' : '#38bdf8'}
                     fontSize="9"
                     fontFamily="monospace"
                     fontWeight="bold"
                   >
-                    🔋 {uav.battery.toFixed(0)}% {isLowCharger ? '[DOWN]' : ''}
+                    {isCharging ? '⚡ CHARGING ' : isQueued ? '⏳ QUEUED ' : '🔋 '}
+                    {uav.battery.toFixed(0)}%
                   </text>
                 </g>
               </g>
@@ -424,7 +578,29 @@ export const MissionMap: React.FC<MissionMapProps> = ({
         {/* Hover Tooltip */}
         {hoveredEntity && (
           <div className="absolute top-4 right-4 glass-panel-glow p-3 rounded-lg text-xs font-mono max-w-xs pointer-events-none z-20">
-            {hoveredEntity.type === 'uav' ? (
+            {hoveredEntity.type === 'station' ? (
+              <div className="space-y-1">
+                <div className="font-bold text-amber-300 text-sm flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  <span>CHARGING STATION</span>
+                </div>
+                <div className="text-slate-300">Location: (25.0, 25.0)</div>
+                <div className="text-slate-300">
+                  Currently Charging:{' '}
+                  <span className="font-bold text-emerald-400">
+                    {hoveredEntity.data.currently_charging_uav_id || 'Dock Free'}
+                  </span>
+                </div>
+                <div className="text-slate-300">
+                  Waiting Queue:{' '}
+                  <span className="font-bold text-purple-300">
+                    {hoveredEntity.data.queue && hoveredEntity.data.queue.length > 0
+                      ? hoveredEntity.data.queue.join(', ')
+                      : '0 robots'}
+                  </span>
+                </div>
+              </div>
+            ) : hoveredEntity.type === 'uav' ? (
               <div className="space-y-1">
                 <div className="font-bold text-cyan-300 text-sm flex items-center justify-between">
                   <span>🤖 {hoveredEntity.data.id}</span>
@@ -432,13 +608,13 @@ export const MissionMap: React.FC<MissionMapProps> = ({
                 </div>
                 <div className="text-slate-300">Position: ({hoveredEntity.data.x.toFixed(1)}, {hoveredEntity.data.y.toFixed(1)})</div>
                 <div className="text-slate-300">
-                  Charger / Battery:{' '}
-                  <span className={`font-bold ${hoveredEntity.data.battery < 25 ? 'text-rose-400 font-extrabold animate-pulse' : 'text-emerald-400'}`}>
-                    {hoveredEntity.data.battery.toFixed(1)}% {hoveredEntity.data.battery < 25 ? '(CHARGER DOWN)' : '(NOMINAL)'}
+                  Battery:{' '}
+                  <span className={`font-bold ${hoveredEntity.data.battery <= 10 ? 'text-rose-400 font-extrabold animate-pulse' : 'text-emerald-400'}`}>
+                    {hoveredEntity.data.battery.toFixed(1)}% {hoveredEntity.data.battery <= 10 ? '(EMERGENCY LOW)' : ''}
                   </span>
                 </div>
-                <div className="text-slate-300">Failure Risk: <span className="font-bold text-rose-400">{hoveredEntity.data.risk_probability?.toFixed(1)}% ({hoveredEntity.data.risk_level})</span></div>
-                <div className="text-slate-300">Target Task: <span className="text-blue-300 font-bold">{hoveredEntity.data.current_task_id || 'Free / Idle'}</span></div>
+                <div className="text-slate-300">Action: <span className="text-amber-300 font-bold">{hoveredEntity.data.current_action || 'Patrol'}</span></div>
+                <div className="text-slate-300">Assigned Task: <span className="text-blue-300 font-bold">{hoveredEntity.data.current_task_id || 'Available Pool'}</span></div>
               </div>
             ) : (
               <div className="space-y-1">

@@ -1,7 +1,7 @@
 import React from 'react';
 import { UAV } from '../types';
 import { UAVCard } from './UAVCard';
-import { Bot } from 'lucide-react';
+import { Bot, Zap } from 'lucide-react';
 
 interface UAVGridProps {
   uavs: UAV[];
@@ -22,17 +22,17 @@ export const UAVGrid: React.FC<UAVGridProps> = ({
 }) => {
   return (
     <div className="space-y-3 font-mono">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
           <Bot className="w-4 h-4 text-cyan-400" />
-          Autonomous Robot Fleet & Charger Status ({uavs.length})
+          5-Robot Fleet & Charging Telemetry ({uavs.length} Units)
         </h2>
-        <span className="text-[11px] text-slate-400">
-          Click "Charger Down" to test immediate reassignment to nearest free robot
+        <span className="text-[11px] text-cyan-400/90 font-medium">
+          💡 Click "⚡ Bat = 10%" to trigger Robot 1 ➔ Robot 4 Handover & Charging
         </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         {uavs.map((uav) => (
           <UAVCard
             key={uav.id}

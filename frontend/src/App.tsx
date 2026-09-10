@@ -17,6 +17,7 @@ import { ReplanningNotificationModal } from './components/ReplanningNotification
 import { MissionConfigModal } from './components/MissionConfigModal';
 import { PresetScenariosModal } from './components/PresetScenariosModal';
 import { MissionExportModal } from './components/MissionExportModal';
+import { HackathonDemoBar } from './components/HackathonDemoBar';
 import { tacticalAudio } from './services/soundEffects';
 import { api } from './services/api';
 
@@ -51,6 +52,8 @@ export function App() {
     handleResetSimulation,
     handleReplanNow,
     handleRefreshComparison,
+    simulateRobot1LowBattery,
+    simulateChargingQueue,
     triggerLowBattery,
     triggerCommLoss,
     triggerFailure,
@@ -70,7 +73,7 @@ export function App() {
     if (replanningNotification) {
       tacticalAudio.playAlertBeep('critical');
       tacticalAudio.speak(
-        `Warning: High failure risk predicted on ${replanningNotification.old_uav_id}. Predictive replanning engaged. Reassigning to ${replanningNotification.new_uav_id}.`
+        `Low battery emergency detected on ${replanningNotification.old_uav_id}. Autonomous task handover engaged. Dispatched ${replanningNotification.new_uav_id}.`
       );
     }
   }, [replanningNotification]);
@@ -80,7 +83,7 @@ export function App() {
       <div className="min-h-screen bg-[#070b14] flex flex-col items-center justify-center text-cyan-400 font-mono gap-3">
         <div className="w-12 h-12 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
         <div className="text-sm uppercase tracking-widest font-bold">
-          Initializing Autonomous Mission Control Center...
+          Initializing 5-Robot Autonomous Mission Center...
         </div>
       </div>
     );
@@ -95,7 +98,7 @@ export function App() {
 
   const activeUavCount =
     missionState?.uavs.filter(
-      (u) => u.status === 'ASSIGNED' || u.status === 'EN_ROUTE' || u.status === 'RETURNING'
+      (u) => u.status === 'WORKING' || u.status === 'ASSIGNED' || u.status === 'EN_ROUTE' || u.status === 'MOVING_TO_CHARGER' || u.status === 'CHARGING'
     ).length || 0;
   const totalUavCount = missionState?.uavs.length || 0;
   const completedTasks = missionState?.tasks.filter((t) => t.status === 'COMPLETED').length || 0;
@@ -125,18 +128,18 @@ export function App() {
 
   const handleStartWithSound = () => {
     tacticalAudio.playAlertBeep('success');
-    tacticalAudio.speak('Mission started. Fleet en route.');
+    tacticalAudio.speak('5-Robot fleet simulation started.');
     handleStartSimulation();
   };
 
   const handlePlanWithSound = () => {
     tacticalAudio.playAlertBeep('click');
-    tacticalAudio.speak('Mission planned. A star collision free routes calculated.');
+    tacticalAudio.speak('Collision-free routes calculated.');
     handlePlanMission();
   };
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-mono">
       {/* Top Navigation Bar */}
       <Header
         missionState={missionState}
@@ -146,23 +149,42 @@ export function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-[1680px] w-full mx-auto p-4 md:p-6 space-y-6">
+      <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 md:p-6 space-y-5">
         {/* Error Alert if any */}
         {error && (
           <div className="glass-panel border-rose-500/50 bg-rose-500/10 p-3 rounded-xl text-rose-300 font-mono text-xs flex items-center justify-between">
-            <span>ERROR: {error}</span>
+            <span>NOTIFICATION: {error}</span>
             <button onClick={() => initialize()} className="text-cyan-400 underline hover:text-cyan-300">
-              Retry Sync
+              Sync State
             </button>
           </div>
         )}
 
+        {/* ⚡ HACKATHON 1-CLICK DEMO CONTROLLER BAR */}
+        <HackathonDemoBar
+          onSimulateRobot1LowBattery={() => {
+            tacticalAudio.playAlertBeep('critical');
+            simulateRobot1LowBattery();
+          }}
+          onSimulateChargingQueue={() => {
+            tacticalAudio.playAlertBeep('warning');
+            simulateChargingQueue();
+          }}
+          onResetFleet={() => {
+            tacticalAudio.playAlertBeep('click');
+            handleResetSimulation();
+          }}
+          chargingStation={missionState?.charging_station}
+          isPlaying={isPlaying}
+          onTogglePlay={isPlaying ? handlePauseSimulation : handleStartSimulation}
+        />
+
         {/* 1. TOP METRIC CARDS (6 Key Metrics) */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <MetricCard
-            title="Active UAVs"
+            title="Active Fleet"
             value={`${activeUavCount} / ${totalUavCount}`}
-            subtitle="Fleet Deployment"
+            subtitle="5 Autonomous Robots"
             icon={Layers}
             accentColor="cyan"
           />
@@ -177,12 +199,12 @@ export function App() {
           <MetricCard
             title="Average Risk"
             value={`${avgRisk}%`}
-            subtitle="ML Predicted Failure"
+            subtitle="Fleet ML Risk Index"
             icon={AlertTriangle}
             accentColor={avgRisk > 60 ? 'rose' : avgRisk > 35 ? 'amber' : 'emerald'}
           />
           <MetricCard
-            title="Replanning Events"
+            title="Handover Events"
             value={missionState?.replanning_count || 0}
             subtitle={`${missionState?.prevented_failures || 0} Failures Prevented`}
             icon={RotateCw}
@@ -191,7 +213,7 @@ export function App() {
           <MetricCard
             title="Energy Consumed"
             value={`${totalEnergy} Units`}
-            subtitle="Simulation Energy Model"
+            subtitle="Fleet Energy Model"
             icon={Zap}
             accentColor="amber"
           />
@@ -215,7 +237,7 @@ export function App() {
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <span>Tactical Airspace & Control</span>
+              <span>Tactical Airspace & 5-Robot Fleet</span>
             </button>
             <button
               onClick={() => setActiveTab('evaluation')}
@@ -225,7 +247,7 @@ export function App() {
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <span>Reactive vs Predictive Evaluation</span>
+              <span>Reactive vs Predictive Handover</span>
             </button>
             <button
               onClick={() => setActiveTab('analytics')}
@@ -245,7 +267,7 @@ export function App() {
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <span>ML Risk Model Diagnostics</span>
+              <span>ML Diagnostics</span>
             </button>
           </div>
         </div>
@@ -253,7 +275,7 @@ export function App() {
         {/* 3. SIMULATION CONTROLS BAR */}
         <SimulationControls
           isPlaying={isPlaying}
-          status={missionState?.status || 'CONFIGURED'}
+          status={missionState?.status || 'RUNNING'}
           speed={simulationSpeed}
           onStart={handleStartWithSound}
           onPause={handlePauseSimulation}
@@ -275,6 +297,7 @@ export function App() {
                   uavs={missionState?.uavs || []}
                   tasks={missionState?.tasks || []}
                   obstacles={missionState?.obstacles || []}
+                  chargingStation={missionState?.charging_station}
                   weather={missionState?.weather}
                   mapWidth={missionState?.mission.map_width || 50}
                   mapHeight={missionState?.mission.map_height || 50}
@@ -346,14 +369,14 @@ export function App() {
               </div>
             </div>
 
-            {/* Bottom Row: Fleet UAV Cards & Event Stream */}
+            {/* Bottom Row: 5-Robot Fleet Cards & Activity Stream */}
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
               <div className="xl:col-span-8">
                 <UAVGrid
                   uavs={missionState?.uavs || []}
                   selectedUAVId={selectedUAVId}
                   onSelectUAV={setSelectedUAVId}
-                  onSimulateLowBattery={(id) => triggerLowBattery(id, 20)}
+                  onSimulateLowBattery={(id) => triggerLowBattery(id, 10)}
                   onSimulateCommLoss={(id) => triggerCommLoss(id, 12)}
                   onSimulateFailure={triggerFailure}
                 />

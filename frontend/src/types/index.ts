@@ -6,8 +6,18 @@ export interface Obstacle {
   height: number;
 }
 
+export interface ChargingStation {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  currently_charging_uav_id?: string | null;
+  queue: string[];
+}
+
 export interface UAV {
   id: string;
+  name?: string;
   mission_id?: string;
   x: number;
   y: number;
@@ -17,7 +27,7 @@ export interface UAV {
   health: number;
   communication: number;
   speed: number;
-  status: 'IDLE' | 'ASSIGNED' | 'EN_ROUTE' | 'EXECUTING' | 'RETURNING' | 'COMPLETED' | 'FAILED' | 'LOW_BATTERY' | string;
+  status: 'IDLE' | 'AVAILABLE' | 'WORKING' | 'ASSIGNED' | 'EN_ROUTE' | 'EXECUTING' | 'RETURNING' | 'COMPLETED' | 'FAILED' | 'LOW_BATTERY' | 'MOVING_TO_CHARGER' | 'CHARGING' | 'WAITING_FOR_CHARGER' | 'RETURNING_TO_TASK' | 'FULLY_CHARGED' | string;
   current_task_id?: string | null;
   target_x?: number | null;
   target_y?: number | null;
@@ -27,6 +37,9 @@ export interface UAV {
   risk_level?: 'LOW' | 'MEDIUM' | 'HIGH';
   risk_probability?: number;
   feature_contributions?: Record<string, number>;
+  charging_status?: 'IDLE' | 'MOVING_TO_CHARGER' | 'WAITING_FOR_CHARGER' | 'CHARGING' | 'FULLY_CHARGED';
+  current_action?: string;
+  queue_position?: number | null;
 }
 
 export interface Task {
@@ -87,6 +100,7 @@ export interface MissionState {
   elapsed_seconds: number;
   recent_events: MissionEvent[];
   last_replanning_event?: ReplanningEventDetails | null;
+  charging_station?: ChargingStation;
 }
 
 export interface MLMetrics {
