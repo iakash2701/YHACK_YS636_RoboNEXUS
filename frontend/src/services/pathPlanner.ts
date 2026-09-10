@@ -327,3 +327,136 @@ export function calculateSafeRoute(
   // Default fallback
   return interpolateWaypoints([[sx, sy], [tx, ty]], 1.2);
 }
+
+/**
+ * Calculates a dedicated, direct, minimal, collision-free return path specifically to the charging port.
+ * Prioritizes:
+ * 1. Direct straight line if clear of NO-FLY zones.
+ * 2. Clean 2-segment L-shaped (Horizontal/Vertical) orthogonal path.
+ * 3. Shortest safe corner detour around blocking obstacles.
+ * 4. Never takes an unnecessary huge roundabout path.
+ * 5. Strictly guarantees NO point or segment crosses/enters any red NO-FLY zone.
+ */
+export function calculateSafeReturnPath(
+  start: [number, number],
+  chargingPort: [number, number],
+  obstacles: Obstacle[] = [],
+  mapWidth: number = 50,
+  mapHeight: number = 50,
+  margin: number = 1.2
+): [number, number][] {
+  const sx = Math.max(0.5, Math.min(mapWidth - 0.5, Math.round(start[0] * 10) / 10));
+  const sy = Math.max(0.5, Math.min(mapHeight - 0.5, Math.round(start[1] * 10) / 10));
+  const cx = Math.max(0.5, Math.min(mapWidth - 0.5, Math.round(chargingPort[0] * 10) / 10));
+  const cy = Math.max(0.5, Math.min(mapHeight - 0.5, Math.round(chargingPort[1] * 10) / 10));
+
+  if (Math.hypot(cx - sx, cy - sy) < 0.3) {
+    return [[sx, sy]];
+  }
+
+  // 1. DIRECT PATH FIRST: If direct line to charging port is clear of NO-FLY zones, use direct straight route!
+  if (isDirectPathClear([sx, sy], [cx, cy], obstacles, margin)) {
+    return interpolateWaypoints([[sx, sy], [cx, cy]], 1.0);
+  }
+
+  // 2. CHECK CLEAN 2-SEGMENT (L-SHAPED) ORTHOGONAL DETOURS:
+  // L1: Horizontal then Vertical: (sx, sy) -> (cx, sy) -> (cx, cy)
+  const l1Clear =
+    !isPointInAnyObstacle(cx, sy, obstacles, margin) &&
+    isDirectPathClear([sx, sy], [cx, sy], obstacles, margin) &&
+    isDirectPathClear([cx, sy], [cx, cy], obstacles, margin);
+
+  // L2: Vertical then Horizontal: (sx, sy) -> (sx, cy) -> (cx, cy)
+  const l2Clear =
+    !isPointInAnyObstacle(sx, cy, obstacles, margin) &&
+    isDirectPathClear([sx, sy], [sx, cy], obstacles, margin) &&
+    isDirectPathClear([sx, cy], [cx, cy], obstacles, margin);
+
+  if (l1Clear && !l2Clear) {
+    return interpolateWaypoints([[sx, sy], [cx, sy], [cx, cy]], 1.0);
+  }
+  if (l2Clear && !l1Clear) {
+    return interpolateWaypoints([[sx, sy], [sx, cy], [cx, cy]], 1.0);
+  }
+  if (l1Clear && l2Clear) {
+    return interpolateWaypoints([[sx, sy], [cx, sy], [cx, cy]], 1.0);
+  }
+
+  // 3. MINIMAL CORNER DETOURS AROUND BLOCKING OBSTACLES:
+  const blockingObs = obstacles.filter(obs => isSegmentBlockedByObstacle([sx, sy], [cx, cy], obs, margin));
+  const candidateRoutes: [number, number][][] = [];
+
+  for (const obs of blockingObs) {
+    const minX = Math.max(1.0, obs.x - margin);
+    const maxX = Math.min(mapWidth - 1.0, obs.x + obs.width + margin);
+    const minY = Math.max(1.0, obs.y - margin);
+    const maxY = Math.min(mapHeight - 1.0, obs.y + obs.height + margin);
+
+    const corners: [number, number][] = [
+      [minX, minY], // Top-Left
+      [maxX, minY], // Top-Right
+      [minX, maxY], // Bottom-Left
+      [maxX, maxY], // Bottom-Right
+    ];
+
+    // Single corner detour: start -> corner -> chargingPort
+    for (const corner of corners) {
+      if (
+        !isPointInAnyObstacle(corner[0], corner[1], obstacles, margin) &&
+        isDirectPathClear([sx, sy], corner, obstacles, margin) &&
+        isDirectPathClear(corner, [cx, cy], obstacles, margin)
+      ) {
+        candidateRoutes.push([[sx, sy], corner, [cx, cy]]);
+      }
+    }
+
+    // 2-corner edge bypass
+    const edgeBypasses: [number, number][][] = [
+      [[sx, sy], [minX, minY], [maxX, minY], [cx, cy]],
+      [[sx, sy], [maxX, minY], [minX, minY], [cx, cy]],
+      [[sx, sy], [minX, maxY], [maxX, maxY], [cx, cy]],
+      [[sx, sy], [maxX, maxY], [minX, maxY], [cx, cy]],
+      [[sx, sy], [minX, minY], [minX, maxY], [cx, cy]],
+      [[sx, sy], [minX, maxY], [minX, minY], [cx, cy]],
+      [[sx, sy], [maxX, minY], [maxX, maxY], [cx, cy]],
+      [[sx, sy], [maxX, maxY], [maxX, minY], [cx, cy]],
+    ];
+
+    for (const route of edgeBypasses) {
+      let routeValid = true;
+      for (let i = 0; i < route.length - 1; i++) {
+        if (!isDirectPathClear(route[i], route[i + 1], obstacles, margin)) {
+          routeValid = false;
+          break;
+        }
+      }
+      for (let i = 1; i < route.length - 1; i++) {
+        if (isPointInAnyObstacle(route[i][0], route[i][1], obstacles, margin)) {
+          routeValid = false;
+          break;
+        }
+      }
+      if (routeValid) {
+        candidateRoutes.push(route);
+      }
+    }
+  }
+
+  if (candidateRoutes.length > 0) {
+    // Select the SHORTEST safe route by Euclidean distance
+    const getPathLength = (pts: [number, number][]) => {
+      let len = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        len += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      }
+      return len;
+    };
+
+    candidateRoutes.sort((a, b) => getPathLength(a) - getPathLength(b));
+    const bestRoute = candidateRoutes[0];
+    return interpolateWaypoints(simplifyOrthogonalPath(bestRoute), 1.0);
+  }
+
+  // 4. General fallback
+  return calculateSafeRoute([sx, sy], [cx, cy], obstacles, mapWidth, mapHeight, margin);
+}

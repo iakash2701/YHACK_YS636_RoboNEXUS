@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { MissionState, MLMetrics, PlannerComparisonResult, AnalyticsData, UAV, Task } from '../types';
 import { api } from '../services/api';
 import { AutonomousDecisionEngine, DEFAULT_5_ROBOTS } from '../services/autonomousDecisionEngine';
-import { calculateSafeRoute } from '../services/pathPlanner';
+import { calculateSafeRoute, calculateSafeReturnPath } from '../services/pathPlanner';
 
 export function useSimulation() {
   const [missionState, setMissionState] = useState<MissionState | null>(null);
@@ -177,7 +177,7 @@ export function useSimulation() {
         } else if (bot.status === 'MOVING_TO_CHARGER' && copy.charging_station) {
           return {
             ...bot,
-            route: calculateSafeRoute([bot.x, bot.y], [copy.charging_station.x, copy.charging_station.y], copy.obstacles),
+            route: calculateSafeReturnPath([bot.x, bot.y], [copy.charging_station.x, copy.charging_station.y], copy.obstacles),
             route_index: 0
           };
         }
@@ -295,7 +295,7 @@ export function useSimulation() {
         } else if (bot.status === 'MOVING_TO_CHARGER' && copy.charging_station) {
           return {
             ...bot,
-            route: calculateSafeRoute([bot.x, bot.y], [copy.charging_station.x, copy.charging_station.y], newObstacles),
+            route: calculateSafeReturnPath([bot.x, bot.y], [copy.charging_station.x, copy.charging_station.y], newObstacles),
             route_index: 0
           };
         }

@@ -1,5 +1,5 @@
 import { MissionState, UAV, Task, Obstacle, ChargingStation, MissionEvent, LowBatteryAlert } from '../types';
-import { calculateSafeRoute, isPointInAnyObstacle, isSegmentBlockedByObstacle, ROBOT_SAFETY_MARGIN } from './pathPlanner';
+import { calculateSafeRoute, calculateSafeReturnPath, isPointInAnyObstacle, isSegmentBlockedByObstacle, ROBOT_SAFETY_MARGIN } from './pathPlanner';
 
 export const LOW_BATTERY_THRESHOLD = 10;
 export const CHARGING_STATION_COORDS = { x: 25, y: 25 };
@@ -461,7 +461,7 @@ export class AutonomousDecisionEngine {
     // 3. ROUTE LOW BATTERY ROBOT TO CHARGING STATION
     lowBot.target_x = charger.x;
     lowBot.target_y = charger.y;
-    lowBot.route = calculateRoute([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
+    lowBot.route = calculateSafeReturnPath([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
     lowBot.route_index = 0;
 
     log(
