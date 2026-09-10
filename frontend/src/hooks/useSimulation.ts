@@ -242,10 +242,26 @@ export function useSimulation() {
     const target = stateCopy.uavs.find(u => u.id === uavId);
     if (target) {
       target.battery = battery;
-      // Reset lock on manual battery change so it triggers ONE acknowledgement alert
-      target.low_battery_handled = false;
-      target.low_battery_ack_pending = false;
-      target.current_action = `Manual Low Battery (${battery}%) Injected`;
+      if (battery <= 10) {
+        // If changing to <= 10%, reset status if previously charging/docked to trigger a new alert cycle
+        if (target.status === 'CHARGING' || target.status === 'MOVING_TO_CHARGER' || target.status === 'WAITING_FOR_CHARGER') {
+          target.status = 'AVAILABLE';
+          target.charging_status = 'IDLE';
+          target.queue_position = null;
+        }
+        target.low_battery_handled = false;
+        target.low_battery_ack_pending = false;
+      } else {
+        // Restored battery > 10%: reset locks so next time it hits <= 10% it triggers alert again
+        target.low_battery_handled = false;
+        target.low_battery_ack_pending = false;
+        if (target.status === 'CHARGING' || target.status === 'MOVING_TO_CHARGER' || target.status === 'WAITING_FOR_CHARGER') {
+          target.status = 'AVAILABLE';
+          target.charging_status = 'IDLE';
+          target.queue_position = null;
+        }
+      }
+      target.current_action = `Manual Battery Set to ${battery}%`;
     }
     const updated = AutonomousDecisionEngine.processSimulationStep(stateCopy);
     setMissionState(updated);

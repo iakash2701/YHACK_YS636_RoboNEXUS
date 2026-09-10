@@ -15,10 +15,15 @@ export const LowBatteryAcknowledgementModal: React.FC<LowBatteryAcknowledgementM
 }) => {
   const [isAcknowledged, setIsAcknowledged] = useState(false);
 
+  // Reset acknowledgement lock whenever a new alert arrives
+  React.useEffect(() => {
+    setIsAcknowledged(false);
+  }, [alert?.robot_id, alert?.timestamp]);
+
   if (!alert) return null;
 
   const handleAcknowledgeClick = () => {
-    if (isAcknowledged) return; // Prevent duplicate rapid clicks
+    if (isAcknowledged) return; // Prevent duplicate rapid clicks on the SAME modal
     setIsAcknowledged(true);
     onAcknowledge(alert.robot_id);
   };

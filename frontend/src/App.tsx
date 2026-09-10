@@ -76,7 +76,7 @@ export function App() {
         `Low battery alert. ${missionState.pending_acknowledgement.robot_id} has reached 10 percent battery. Operator acknowledgement required.`
       );
     }
-  }, [missionState?.pending_acknowledgement?.robot_id]);
+  }, [missionState?.pending_acknowledgement?.robot_id, missionState?.pending_acknowledgement?.timestamp]);
 
   if (loading && !missionState) {
     return (
@@ -436,6 +436,11 @@ export function App() {
 
       {/* Dedicated Low Battery Operator Acknowledgement Modal */}
       <LowBatteryAcknowledgementModal
+        key={
+          missionState?.pending_acknowledgement
+            ? `${missionState.pending_acknowledgement.robot_id}-${missionState.pending_acknowledgement.timestamp}`
+            : 'no-alert'
+        }
         alert={missionState?.pending_acknowledgement || null}
         onAcknowledge={handleAcknowledgeLowBattery}
         onClose={() => {

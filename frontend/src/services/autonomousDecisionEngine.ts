@@ -195,13 +195,19 @@ export class AutonomousDecisionEngine {
     }
     const charger = state.charging_station;
 
-    // 1. PER-ROBOT BATTERY MONITOR WITH STRICT ONE-TIME EVENT GUARD
+    // 1. PER-ROBOT BATTERY MONITOR WITH STRICT ONE-TIME EVENT GUARD & RECOVERY RESET
     for (const bot of state.uavs) {
       const isLow = bot.battery <= LOW_BATTERY_THRESHOLD;
       const isNotInChargingFlow =
         bot.status !== 'CHARGING' &&
         bot.status !== 'MOVING_TO_CHARGER' &&
         bot.status !== 'WAITING_FOR_CHARGER';
+
+      // RECOVERY RESET: If robot battery has recovered above threshold (> 10%), reset low-battery event locks!
+      if (!isLow && isNotInChargingFlow) {
+        bot.low_battery_handled = false;
+        bot.low_battery_ack_pending = false;
+      }
 
       // Detect transition to low battery requiring ONE-TIME acknowledgement
       if (isLow && !bot.low_battery_handled && !bot.low_battery_ack_pending && isNotInChargingFlow) {
@@ -229,7 +235,7 @@ export class AutonomousDecisionEngine {
           task_id: task?.id || null,
           task_name: task?.name || null,
           replacement_id: replacementCandidate?.id || 'Standby Robot',
-          timestamp: now,
+          timestamp: `${now}.${Date.now().toString().slice(-4)}`,
           reason: `${bot.id} reached battery threshold (${bot.battery.toFixed(1)}%). Requires charging station dispatch.`
         };
 
