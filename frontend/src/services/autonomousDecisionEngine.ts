@@ -1,4 +1,5 @@
 import { MissionState, UAV, Task, Obstacle, ChargingStation, MissionEvent, LowBatteryAlert } from '../types';
+import { calculateSafeRoute, isPointInAnyObstacle, isSegmentBlockedByObstacle, ROBOT_SAFETY_MARGIN } from './pathPlanner';
 
 export const LOW_BATTERY_THRESHOLD = 10;
 export const CHARGING_STATION_COORDS = { x: 25, y: 25 };
@@ -159,20 +160,12 @@ export const DEFAULT_DEMO_OBSTACLES: Obstacle[] = [
   { id: 'OBS-03', x: 8, y: 24, width: 6, height: 10 }
 ];
 
-export function calculateRoute(start: [number, number], end: [number, number], obstacles: Obstacle[] = []): [number, number][] {
-  const points: [number, number][] = [start];
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
-  const dist = Math.hypot(dx, dy);
-  const steps = Math.max(4, Math.ceil(dist / 3.0));
-
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    const px = Math.round((start[0] + dx * t) * 10) / 10;
-    const py = Math.round((start[1] + dy * t) * 10) / 10;
-    points.push([px, py]);
-  }
-  return points;
+export function calculateRoute(
+  start: [number, number],
+  end: [number, number],
+  obstacles: Obstacle[] = []
+): [number, number][] {
+  return calculateSafeRoute(start, end, obstacles);
 }
 
 export class AutonomousDecisionEngine {
@@ -513,6 +506,18 @@ export class AutonomousDecisionEngine {
    * Resets fleet to initial 5-robot state.
    */
   public static createInitial5RobotMission(): MissionState {
+    const obstacles: Obstacle[] = JSON.parse(JSON.stringify(DEFAULT_DEMO_OBSTACLES));
+    const uavs: UAV[] = JSON.parse(JSON.stringify(DEFAULT_5_ROBOTS));
+    const tasks: Task[] = JSON.parse(JSON.stringify(DEFAULT_5_TASKS));
+
+    // Calculate guaranteed collision-free routes avoiding all red NO-FLY zones
+    for (const bot of uavs) {
+      if (bot.current_task_id && typeof bot.target_x === 'number' && typeof bot.target_y === 'number') {
+        bot.route = calculateSafeRoute([bot.x, bot.y], [bot.target_x, bot.target_y], obstacles);
+        bot.route_index = 0;
+      }
+    }
+
     return {
       mission: {
         id: 'MISSION-5ROBOT-DEMO',
@@ -522,9 +527,9 @@ export class AutonomousDecisionEngine {
         map_width: 50,
         map_height: 50
       },
-      uavs: JSON.parse(JSON.stringify(DEFAULT_5_ROBOTS)),
-      tasks: JSON.parse(JSON.stringify(DEFAULT_5_TASKS)),
-      obstacles: JSON.parse(JSON.stringify(DEFAULT_DEMO_OBSTACLES)),
+      uavs,
+      tasks,
+      obstacles,
       weather: 'NORMAL',
       status: 'RUNNING',
       step_count: 0,

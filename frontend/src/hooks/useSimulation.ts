@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { MissionState, MLMetrics, PlannerComparisonResult, AnalyticsData, UAV, Task } from '../types';
 import { api } from '../services/api';
 import { AutonomousDecisionEngine, DEFAULT_5_ROBOTS } from '../services/autonomousDecisionEngine';
+import { calculateSafeRoute } from '../services/pathPlanner';
 
 export function useSimulation() {
   const [missionState, setMissionState] = useState<MissionState | null>(null);
@@ -163,7 +164,27 @@ export function useSimulation() {
   // Controls
   const handlePlanMission = async () => {
     if (!missionState) return;
-    setMissionState(prev => prev ? AutonomousDecisionEngine.processSimulationStep(prev) : null);
+    setMissionState(prev => {
+      if (!prev) return null;
+      const copy = JSON.parse(JSON.stringify(prev)) as MissionState;
+      copy.uavs = copy.uavs.map(bot => {
+        if ((bot.status === 'WORKING' || bot.status === 'ASSIGNED' || bot.status === 'EN_ROUTE') && typeof bot.target_x === 'number' && typeof bot.target_y === 'number') {
+          return {
+            ...bot,
+            route: calculateSafeRoute([bot.x, bot.y], [bot.target_x, bot.target_y], copy.obstacles),
+            route_index: 0
+          };
+        } else if (bot.status === 'MOVING_TO_CHARGER' && copy.charging_station) {
+          return {
+            ...bot,
+            route: calculateSafeRoute([bot.x, bot.y], [copy.charging_station.x, copy.charging_station.y], copy.obstacles),
+            route_index: 0
+          };
+        }
+        return bot;
+      });
+      return copy;
+    });
   };
 
   const handleStartSimulation = async () => {
@@ -259,7 +280,29 @@ export function useSimulation() {
 
   const triggerObstacle = async (obstacle: any) => {
     if (!missionState) return;
-    setMissionState(prev => (prev ? { ...prev, obstacles: [...prev.obstacles, obstacle] } : null));
+    setMissionState(prev => {
+      if (!prev) return null;
+      const newObstacles = [...prev.obstacles, obstacle];
+      const copy: MissionState = JSON.parse(JSON.stringify(prev));
+      copy.obstacles = newObstacles;
+      copy.uavs = copy.uavs.map(bot => {
+        if ((bot.status === 'WORKING' || bot.status === 'ASSIGNED' || bot.status === 'EN_ROUTE') && typeof bot.target_x === 'number' && typeof bot.target_y === 'number') {
+          return {
+            ...bot,
+            route: calculateSafeRoute([bot.x, bot.y], [bot.target_x, bot.target_y], newObstacles),
+            route_index: 0
+          };
+        } else if (bot.status === 'MOVING_TO_CHARGER' && copy.charging_station) {
+          return {
+            ...bot,
+            route: calculateSafeRoute([bot.x, bot.y], [copy.charging_station.x, copy.charging_station.y], newObstacles),
+            route_index: 0
+          };
+        }
+        return bot;
+      });
+      return copy;
+    });
   };
 
   const selectedUAV: UAV | undefined = missionState?.uavs.find(u => u.id === selectedUAVId);
