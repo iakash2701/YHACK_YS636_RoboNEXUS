@@ -1,0 +1,33 @@
+{
+  "model_name": "RandomForestClassifier",
+  "dataset_samples": 8000,
+  "train_samples": 6400,
+  "test_samples": 1600,
+  "accuracy": 0.9581,
+  "precision": 0.958,
+  "recall": 0.9515,
+  "f1_score": 0.9548,
+  "roc_auc": 0.994,
+  "feature_importances": {
+    "battery_percentage": 0.4477352653031149,
+    "distance_to_task": 0.05743753769845655,
+    "distance_to_base": 0.03606356107197634,
+    "uav_health": 0.12998290320205766,
+    "communication_quality": 0.06346459466241619,
+    "speed": 0.013713316928764999,
+    "task_priority": 0.005698609841447451,
+    "estimated_energy_required": 0.20153940467594306,
+    "weather_factor": 0.0443648066158229
+  },
+  "feature_names": [
+    "battery_percentage",
+    "distance_to_task",
+    "distance_to_base",
+    "uav_health",
+    "communication_quality",
+    "speed",
+    "task_priority",
+    "estimated_energy_required",
+    "weather_factor"
+  ]
+}
