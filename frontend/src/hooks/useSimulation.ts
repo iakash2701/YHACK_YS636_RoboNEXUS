@@ -192,7 +192,14 @@ export function useSimulation() {
     // comparison static or calculated
   };
 
-  // ONE-TIME ACKNOWLEDGEMENT HANDLER
+  // PREDICTIVE RISK ACKNOWLEDGEMENT HANDLER
+  const handleAcknowledgePredictiveRisk = useCallback((robotId: string) => {
+    if (!missionState) return;
+    const updated = AutonomousDecisionEngine.acknowledgePredictiveRiskEvent(missionState, robotId);
+    setMissionState(updated);
+  }, [missionState]);
+
+  // ONE-TIME EMERGENCY LOW BATTERY ACKNOWLEDGEMENT HANDLER
   const handleAcknowledgeLowBattery = useCallback((robotId: string) => {
     if (!missionState) return;
     const updated = AutonomousDecisionEngine.acknowledgeLowBatteryEvent(missionState, robotId);
@@ -200,6 +207,13 @@ export function useSimulation() {
   }, [missionState]);
 
   // 1-Click Hackathon Demo Triggers
+  const simulatePredictiveRiskDemo = () => {
+    if (!missionState) return;
+    setIsPlaying(true);
+    const updated = AutonomousDecisionEngine.triggerDemoPredictiveRiskSurge(missionState);
+    setMissionState(updated);
+  };
+
   const simulateRobot1LowBattery = () => {
     if (!missionState) return;
     setIsPlaying(true);
@@ -224,6 +238,8 @@ export function useSimulation() {
       // Reset lock on manual battery change so it triggers ONE acknowledgement alert
       target.low_battery_handled = false;
       target.low_battery_ack_pending = false;
+      target.predictive_risk_handled = false;
+      target.predictive_risk_ack_pending = false;
       target.current_action = `Manual Low Battery (${battery}%) Injected`;
     }
     const updated = AutonomousDecisionEngine.processSimulationStep(stateCopy);
@@ -277,6 +293,7 @@ export function useSimulation() {
     isPlaying,
     loading,
     error,
+    handleAcknowledgePredictiveRisk,
     handleAcknowledgeLowBattery,
     handlePlanMission,
     handleStartSimulation,
@@ -284,6 +301,7 @@ export function useSimulation() {
     handleResetSimulation,
     handleReplanNow,
     handleRefreshComparison,
+    simulatePredictiveRiskDemo,
     simulateRobot1LowBattery,
     simulateChargingQueue,
     triggerLowBattery,

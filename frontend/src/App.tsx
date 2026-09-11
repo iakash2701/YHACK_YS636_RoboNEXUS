@@ -14,6 +14,7 @@ import { ComparisonPanel } from './components/ComparisonPanel';
 import { MLMetricsPanel } from './components/MLMetricsPanel';
 import { AnalyticsCharts } from './components/AnalyticsCharts';
 import { LowBatteryAcknowledgementModal } from './components/LowBatteryAcknowledgementModal';
+import { PredictiveRiskModal } from './components/PredictiveRiskModal';
 import { MissionConfigModal } from './components/MissionConfigModal';
 import { PresetScenariosModal } from './components/PresetScenariosModal';
 import { MissionExportModal } from './components/MissionExportModal';
@@ -44,6 +45,7 @@ export function App() {
     isPlaying,
     loading,
     error,
+    handleAcknowledgePredictiveRisk,
     handleAcknowledgeLowBattery,
     handlePlanMission,
     handleStartSimulation,
@@ -51,6 +53,7 @@ export function App() {
     handleResetSimulation,
     handleReplanNow,
     handleRefreshComparison,
+    simulatePredictiveRiskDemo,
     simulateRobot1LowBattery,
     simulateChargingQueue,
     triggerLowBattery,
@@ -77,6 +80,16 @@ export function App() {
       );
     }
   }, [missionState?.pending_acknowledgement?.robot_id]);
+
+  // Trigger sound effect on predictive risk alert
+  React.useEffect(() => {
+    if (missionState?.pending_predictive_alert) {
+      tacticalAudio.playAlertBeep('warning');
+      tacticalAudio.speak(
+        `Predictive risk alert. ${missionState.pending_predictive_alert.robot_id} is predicted to fail in ${missionState.pending_predictive_alert.predicted_failure_minutes} minutes. Preventive action recommended.`
+      );
+    }
+  }, [missionState?.pending_predictive_alert?.robot_id]);
 
   if (loading && !missionState) {
     return (
@@ -162,6 +175,10 @@ export function App() {
 
         {/* ⚡ HACKATHON 1-CLICK DEMO CONTROLLER BAR */}
         <HackathonDemoBar
+          onSimulatePredictiveRiskDemo={() => {
+            tacticalAudio.playAlertBeep('warning');
+            simulatePredictiveRiskDemo();
+          }}
           onSimulateRobot1LowBattery={() => {
             tacticalAudio.playAlertBeep('critical');
             simulateRobot1LowBattery();
@@ -433,6 +450,17 @@ export function App() {
           </div>
         )}
       </main>
+
+      {/* Predictive Failure Risk Prevention Modal */}
+      <PredictiveRiskModal
+        alert={missionState?.pending_predictive_alert || null}
+        onAcknowledge={handleAcknowledgePredictiveRisk}
+        onClose={() => {
+          if (missionState?.pending_predictive_alert) {
+            handleAcknowledgePredictiveRisk(missionState.pending_predictive_alert.robot_id);
+          }
+        }}
+      />
 
       {/* Dedicated Low Battery Operator Acknowledgement Modal */}
       <LowBatteryAcknowledgementModal
