@@ -19,6 +19,7 @@ import { MissionConfigModal } from './components/MissionConfigModal';
 import { PresetScenariosModal } from './components/PresetScenariosModal';
 import { MissionExportModal } from './components/MissionExportModal';
 import { HackathonDemoBar } from './components/HackathonDemoBar';
+import { LoginModal, OperatorProfile } from './components/LoginModal';
 import { tacticalAudio } from './services/soundEffects';
 import { api } from './services/api';
 
@@ -69,6 +70,41 @@ export function App() {
   const [isPresetsOpen, setIsPresetsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'control' | 'analytics' | 'evaluation' | 'ml'>('control');
+
+  // Operator Authentication State
+  const [operatorProfile, setOperatorProfile] = useState<OperatorProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem('robonexus_operator');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(() => !localStorage.getItem('robonexus_operator'));
+
+  const handleLoginSuccess = (profile: OperatorProfile) => {
+    setOperatorProfile(profile);
+    setIsLoginOpen(false);
+    try {
+      localStorage.setItem('robonexus_operator', JSON.stringify(profile));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
+    }
+    tacticalAudio.playAlertBeep('success');
+    tacticalAudio.speak(`Security clearance verified. Welcome ${profile.callsign}.`);
+  };
+
+  const handleLockTerminal = () => {
+    setOperatorProfile(null);
+    setIsLoginOpen(true);
+    try {
+      localStorage.removeItem('robonexus_operator');
+    } catch (e) {
+      console.warn('LocalStorage remove failed:', e);
+    }
+    tacticalAudio.playAlertBeep('warning');
+    tacticalAudio.speak('Terminal locked. Authentication required.');
+  };
 
 
   // Trigger sound effect on low battery acknowledgement alert
@@ -156,9 +192,11 @@ export function App() {
       {/* Top Navigation Bar */}
       <Header
         missionState={missionState}
+        operatorProfile={operatorProfile}
         onOpenConfig={() => setIsConfigOpen(true)}
         onOpenPresets={() => setIsPresetsOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
+        onLockTerminal={handleLockTerminal}
       />
 
       {/* Main Container */}
@@ -494,6 +532,12 @@ export function App() {
         isOpen={isConfigOpen}
         onClose={() => setIsConfigOpen(false)}
         onCreateMission={handleCreateNewMission}
+      />
+
+      {/* Operator Authentication Login Modal */}
+      <LoginModal
+        isOpen={isLoginOpen}
+        onLoginSuccess={handleLoginSuccess}
       />
     </div>
   );

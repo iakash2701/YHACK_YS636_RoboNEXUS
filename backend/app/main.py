@@ -79,6 +79,19 @@ def health_check():
         "ai_risk_engine": "ACTIVE (RandomForestClassifier)"
     }
 
+@app.post("/api/auth/login")
+def auth_login(payload: dict = None):
+    callsign = (payload or {}).get("callsign", "COMMANDER-ALPHA")
+    role = (payload or {}).get("role", "Autonomous Systems Flight Director")
+    return {
+        "status": "AUTHENTICATED",
+        "callsign": str(callsign).upper(),
+        "role": role,
+        "clearanceLevel": "LEVEL 5 - TOP SECRET",
+        "badgeId": f"OP-{abs(hash(str(callsign))) % 9000 + 1000}",
+        "token": "bearer-robonexus-jwt-session-2026"
+    }
+
 @app.websocket("/ws/mission/{mission_id}")
 async def websocket_mission_endpoint(websocket: WebSocket, mission_id: str):
     await websocket.accept()
