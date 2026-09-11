@@ -257,13 +257,81 @@ export class AutonomousDecisionEngine {
     }
     const charger = state.charging_station;
 
-    // 1. PER-ROBOT BATTERY MONITOR WITH STRICT ONE-TIME EVENT GUARD & RECOVERY RESET
+    // 0. PREDICTIVE FAILURE RISK ENGINE EVALUATION (PREDICT BEFORE 10% FAILURE)
+    for (const bot of state.uavs) {
+      if ((bot.status === 'WORKING' || bot.status === 'ASSIGNED' || bot.status === 'EN_ROUTE') && bot.current_task_id) {
+        const task = state.tasks.find((t) => t.id === bot.current_task_id && t.status !== 'COMPLETED');
+        if (task) {
+          const dx = task.x - bot.x;
+          const dy = task.y - bot.y;
+          const distToTask = Math.hypot(dx, dy);
+          const distToBase = Math.hypot(task.x - bot.base_x, task.y - bot.base_y);
+
+          // Deterministic explainable risk score calculation (0 - 100%)
+          const batteryFactor = bot.battery < 40 ? ((40 - bot.battery) / 40) * 60 : ((100 - bot.battery) / 100) * 15;
+          const distanceFactor = Math.min(25, (distToTask + distToBase) * 0.4);
+          const workloadFactor = (task.priority || 3) * 3;
+
+          const rawRisk = Math.min(98, Math.round(batteryFactor + distanceFactor + workloadFactor));
+          bot.risk_probability = rawRisk;
+
+          if (rawRisk >= 60) {
+            bot.risk_level = 'HIGH';
+          } else if (rawRisk >= 35) {
+            bot.risk_level = 'MEDIUM';
+          } else {
+            bot.risk_level = 'LOW';
+          }
+
+          // Calculate estimated minutes remaining before critical battery failure (<=10%)
+          const reserveBattery = Math.max(0, bot.battery - 10.0);
+          const estimatedDrainPerMin = 6.4; // ~6.4% per min on active flight
+          bot.predicted_failure_minutes = Math.max(0.1, Math.round((reserveBattery / estimatedDrainPerMin) * 10) / 10);
+
+          // PREDICTIVE RISK TRIGGER (BEFORE 10% EMERGENCY BATTERY)
+          const isPredictiveHighRisk = (rawRisk >= 60 || bot.battery <= 32) && bot.battery > 10;
+
+          if (isPredictiveHighRisk && !bot.predictive_risk_handled && !bot.predictive_risk_ack_pending) {
+            bot.predictive_risk_ack_pending = true;
+            bot.status = 'HIGH_RISK';
+            bot.current_action = `⚠️ Predicted Mission Failure Risk (${rawRisk}% HIGH) - Preventive Action Recommended`;
+
+            const replacementCandidate = AutonomousDecisionEngine.findBestReplacementRobot(state, bot.id, task);
+
+            state.pending_predictive_alert = {
+              robot_id: bot.id,
+              robot_name: bot.name || bot.id,
+              battery: bot.battery,
+              risk_probability: rawRisk,
+              risk_level: bot.risk_level,
+              task_id: task.id,
+              task_name: task.name,
+              replacement_id: replacementCandidate?.id || 'Robot 4',
+              predicted_failure_minutes: bot.predicted_failure_minutes,
+              timestamp: `${now}.${Date.now().toString().slice(-4)}`,
+              reason: `Predictive AI Model forecasts failure risk on ${bot.id} (${bot.battery.toFixed(1)}% battery, ${rawRisk}% risk). Preventive reassignment recommended before failure occurs.`
+            };
+
+            log(
+              'PREDICTIVE_FAILURE_RISK_DETECTED',
+              `⚠️ PREDICTED MISSION FAILURE: ${bot.id}`,
+              `[${now}] ${bot.id} is predicted to be unable to safely complete ${task.name}. Risk: ${rawRisk}% HIGH (Est. Failure: ~${bot.predicted_failure_minutes} min).`,
+              { robot_id: bot.id, battery: bot.battery, risk_score: rawRisk, task_id: task.id }
+            );
+          }
+        }
+      }
+    }
+
+    // 1. PER-ROBOT 10% EMERGENCY BATTERY MONITOR (FALLBACK SAFETY NET)
     for (const bot of state.uavs) {
       const isLow = bot.battery <= LOW_BATTERY_THRESHOLD;
       const isNotInChargingFlow =
         bot.status !== 'CHARGING' &&
         bot.status !== 'MOVING_TO_CHARGER' &&
-        bot.status !== 'WAITING_FOR_CHARGER';
+        bot.status !== 'WAITING_FOR_CHARGER' &&
+        bot.status !== 'RETURNING' &&
+        !bot.predictive_risk_handled;
 
       // RECOVERY RESET: If robot battery has recovered above threshold (> 10%), reset low-battery event locks!
       if (!isLow && isNotInChargingFlow) {
@@ -271,7 +339,7 @@ export class AutonomousDecisionEngine {
         bot.low_battery_ack_pending = false;
       }
 
-      // Detect transition to low battery requiring ONE-TIME acknowledgement
+      // Detect transition to emergency low battery requiring ONE-TIME acknowledgement
       if (isLow && !bot.low_battery_handled && !bot.low_battery_ack_pending && isNotInChargingFlow) {
         bot.low_battery_ack_pending = true;
         bot.status = 'AWAITING_ACK';
@@ -282,7 +350,6 @@ export class AutonomousDecisionEngine {
         // Identify suggested replacement candidate dynamically using priority ranking
         const replacementCandidate = AutonomousDecisionEngine.findBestReplacementRobot(state, bot.id, task);
 
-        // Set the active modal state for this robot (ONE MODAL ONLY)
         state.pending_acknowledgement = {
           robot_id: bot.id,
           robot_name: bot.name || bot.id,
@@ -298,8 +365,8 @@ export class AutonomousDecisionEngine {
 
         log(
           'BATTERY_ALERT_TRIGGERED',
-          `⚠️ Low Battery Alert: ${bot.id}`,
-          `[${now}] ${bot.id} battery reached ${bot.battery.toFixed(1)}%. One-time acknowledgement modal generated.`,
+          `⚠️ Emergency Low Battery Alert: ${bot.id}`,
+          `[${now}] ${bot.id} battery reached ${bot.battery.toFixed(1)}%. One-time emergency acknowledgement modal generated.`,
           { robot_id: bot.id, battery: bot.battery }
         );
       }
@@ -549,6 +616,138 @@ export class AutonomousDecisionEngine {
 
     state.recent_events = events;
     return state;
+  }
+
+  /**
+   * Executes PREDICT -> PREVENT -> REASSIGN -> REPLAN workflow:
+   * 1. Acknowledges predictive risk event before failure occurs.
+   * 2. Reassigns task from high-risk robot to best available replacement (Robot 4).
+   * 3. Recalculates collision-free A* route for replacement robot.
+   * 4. Safe transit for original robot to charging station avoiding NO-FLY zones.
+   */
+  public static acknowledgePredictiveRiskEvent(prevState: MissionState, robotId: string): MissionState {
+    const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
+    const now = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const events: MissionEvent[] = [...(state.recent_events || [])];
+
+    const log = (type: string, title: string, desc: string, details?: any) => {
+      events.unshift({
+        mission_id: state.mission?.id || 'DEMO',
+        event_type: type,
+        title,
+        description: desc,
+        details,
+        timestamp: now
+      });
+      if (events.length > 50) events.pop();
+    };
+
+    const lowBot = state.uavs.find((u) => u.id === robotId);
+    if (!lowBot) return state;
+
+    lowBot.predictive_risk_ack_pending = false;
+    lowBot.predictive_risk_handled = true;
+    lowBot.status = 'MOVING_TO_CHARGER';
+    lowBot.charging_status = 'MOVING_TO_CHARGER';
+    lowBot.current_action = 'Preventive Transit to Charging Station (Zero Failure)';
+
+    state.pending_predictive_alert = null;
+
+    if (!state.charging_station) {
+      state.charging_station = { ...INITIAL_CHARGING_STATION };
+    }
+    const charger = state.charging_station;
+
+    // SAFE TASK REASSIGNMENT
+    const originalTask = state.tasks.find((t) => t.id === lowBot.current_task_id && t.status !== 'COMPLETED');
+    if (originalTask) {
+      let replacement = state.uavs.find(
+        (u) => u.id === 'Robot 4' && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
+      );
+      if (!replacement) {
+        replacement = state.uavs.find(
+          (u) => u.id !== lowBot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
+        );
+      }
+
+      if (replacement) {
+        const abandonedTaskId = originalTask.id;
+        lowBot.current_task_id = null;
+
+        replacement.status = 'WORKING';
+        replacement.current_task_id = abandonedTaskId;
+        replacement.target_x = originalTask.x;
+        replacement.target_y = originalTask.y;
+        replacement.route = calculateRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
+        replacement.route_index = 0;
+        replacement.current_action = `Preventive Takeover: Continuing ${originalTask.name}`;
+
+        originalTask.assigned_uav_id = replacement.id;
+        originalTask.status = 'REASSIGNED';
+
+        state.replanning_count = (state.replanning_count || 0) + 1;
+        state.prevented_failures = (state.prevented_failures || 0) + 1;
+
+        // 5 Sequential Hackathon Event Stream Logs
+        log(
+          'PREVENTIVE_ACTION_INITIATED',
+          '🛡️ Preventive Action Initiated',
+          `[${now}] Operator approved preventive intervention for ${lowBot.id}. Halting failure before occurrence.`
+        );
+
+        log(
+          'REPLACEMENT_ROBOT_SELECTED',
+          `🤖 Replacement Robot Selected: ${replacement.id}`,
+          `[${now}] ${replacement.id} selected as optimal replacement (Battery: ${replacement.battery}%, Ready in Pool).`
+        );
+
+        log(
+          'PREDICTIVE_TASK_REASSIGNED',
+          `🔄 Task Reassigned: ${lowBot.id} ➔ ${replacement.id}`,
+          `[${now}] ${originalTask.name} reassigned from ${lowBot.id} to ${replacement.id}.`
+        );
+
+        log(
+          'PREDICTIVE_MISSION_REPLANNED',
+          '🗺️ Mission Replanned (A* Route Calculated)',
+          `[${now}] Collision-free A* route calculated for ${replacement.id} around NO-FLY zones.`
+        );
+      }
+    }
+
+    // ROUTE ORIGINAL ROBOT SAFELY BACK TO CHARGING STATION
+    lowBot.target_x = charger.x;
+    lowBot.target_y = charger.y;
+    lowBot.route = calculateRoute([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
+    lowBot.route_index = 0;
+
+    log(
+      'PREVENTIVE_ROUTED_TO_CHARGER',
+      `🔋 ${lowBot.id} Returning to Charging Station`,
+      `[${now}] ${lowBot.id} in safe transit to Charging Station at (${charger.x}, ${charger.y}). Mission continues with 0 downtime.`
+    );
+
+    state.recent_events = events;
+    return state;
+  }
+
+  /**
+   * Instantly sets Robot 1 battery = 28% while on TASK-001 to trigger PREDICT -> PREVENT -> REASSIGN -> REPLAN demo.
+   */
+  public static triggerDemoPredictiveRiskSurge(prevState: MissionState): MissionState {
+    const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
+    const robot1 = state.uavs.find((u) => u.id === 'Robot 1' || u.id === 'UAV-01');
+    if (robot1) {
+      robot1.battery = 28.0;
+      robot1.predictive_risk_handled = false; // Reset lock for new demo run
+      robot1.predictive_risk_ack_pending = false;
+      robot1.low_battery_handled = true; // Prevent emergency modal conflict
+      if (!robot1.current_task_id) {
+        robot1.current_task_id = 'TASK-001';
+        robot1.status = 'WORKING';
+      }
+    }
+    return AutonomousDecisionEngine.processSimulationStep(state);
   }
 
   /**

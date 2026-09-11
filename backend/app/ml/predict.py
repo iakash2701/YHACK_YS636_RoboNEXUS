@@ -104,11 +104,17 @@ class RiskPredictor:
         # Recommendation generation
         recommendation = self._generate_recommendation(risk_level, feature_contributions, battery_percentage, communication_quality, uav_health)
         
+        # Calculate estimated time-to-failure in minutes based on battery reserve and drain rate
+        battery_reserve = max(0.0, battery_percentage - 10.0)
+        drain_rate_per_min = max(0.5, (estimated_energy_required / max(1.0, distance_to_task)) * 1.2) if distance_to_task > 0 else 1.0
+        predicted_failure_minutes = round(battery_reserve / drain_rate_per_min, 1) if battery_reserve > 0 else 0.0
+
         return {
             "risk_probability": risk_probability,
             "risk_level": risk_level,
             "feature_contributions": feature_contributions,
             "recommendation": recommendation,
+            "predicted_failure_minutes": predicted_failure_minutes,
             "metrics": self.metrics
         }
         

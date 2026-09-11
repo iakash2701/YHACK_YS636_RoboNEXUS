@@ -79,15 +79,18 @@ class PredictiveReplanner:
                     if candidate_robot:
                         alt_robot, alt_route, alt_metrics, alt_dist = candidate_robot
                         
+                        is_predictive = current_risk_prob >= risk_threshold and not is_charger_down
+                        title_prefix = "⚠️ PREDICTED FAILURE RISK" if is_predictive else "⚡ Charger Down"
+                        
                         reason_str = (
-                            f"Robot {uav['id']} charger is down ({uav.get('battery', 0):.1f}%)! "
-                            f"Immediately reassigned to nearest free robot {alt_robot['id']} "
+                            f"Robot {uav['id']} high risk detected ({current_risk_prob:.1f}%, Battery: {uav.get('battery', 0):.1f}%). "
+                            f"Preventive reassignment to nearest free robot {alt_robot['id']} "
                             f"(Distance: {alt_dist:.1f} units, Charger: {alt_robot.get('battery', 100):.1f}%)."
                         )
                         
                         event = {
                             "type": "PREDICTIVE_REPLANNING",
-                            "title": f"⚡ Charger Down: {uav['id']} ➔ {alt_robot['id']}",
+                            "title": f"{title_prefix}: {uav['id']} ➔ {alt_robot['id']}",
                             "task_id": task["id"],
                             "task_name": task["name"],
                             "old_uav_id": uav["id"],
@@ -97,11 +100,12 @@ class PredictiveReplanner:
                             "new_uav_risk": 15.0,
                             "new_uav_battery": round(alt_robot.get("battery", 100), 1),
                             "distance_to_task": round(alt_dist, 1),
+                            "predicted_failure_minutes": risk_res.get("predicted_failure_minutes", 2.8),
                             "reason": reason_str,
                             "old_feature_contributions": risk_res["feature_contributions"],
                             "new_route": alt_route,
                             "new_metrics": alt_metrics,
-                            "timestamp_desc": "Immediate nearest-free robot dispatch."
+                            "timestamp_desc": "Preventive nearest-free robot dispatch."
                         }
                         
                         # 1. Low charger robot safely heads back to charger dock

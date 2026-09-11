@@ -213,7 +213,14 @@ export function useSimulation() {
     // comparison static or calculated
   };
 
-  // ONE-TIME ACKNOWLEDGEMENT HANDLER
+  // PREDICTIVE RISK ACKNOWLEDGEMENT HANDLER
+  const handleAcknowledgePredictiveRisk = useCallback((robotId: string) => {
+    if (!missionState) return;
+    const updated = AutonomousDecisionEngine.acknowledgePredictiveRiskEvent(missionState, robotId);
+    setMissionState(updated);
+  }, [missionState]);
+
+  // ONE-TIME EMERGENCY LOW BATTERY ACKNOWLEDGEMENT HANDLER
   const handleAcknowledgeLowBattery = useCallback((robotId: string) => {
     setMissionState(prev => {
       if (!prev) return null;
@@ -222,6 +229,13 @@ export function useSimulation() {
   }, []);
 
   // 1-Click Hackathon Demo Triggers
+  const simulatePredictiveRiskDemo = () => {
+    if (!missionState) return;
+    setIsPlaying(true);
+    const updated = AutonomousDecisionEngine.triggerDemoPredictiveRiskSurge(missionState);
+    setMissionState(updated);
+  };
+
   const simulateRobot1LowBattery = () => {
     setIsPlaying(true);
     setMissionState(prev => {
@@ -254,17 +268,22 @@ export function useSimulation() {
         }
         target.low_battery_handled = false;
         target.low_battery_ack_pending = false;
+        target.predictive_risk_handled = false;
+        target.predictive_risk_ack_pending = false;
+        target.current_action = `Manual Low Battery (${battery}%) Injected`;
       } else {
         // Restored battery > 10%: reset locks so next time it hits <= 10% it triggers alert again
         target.low_battery_handled = false;
         target.low_battery_ack_pending = false;
+        target.predictive_risk_handled = false;
+        target.predictive_risk_ack_pending = false;
         if (target.status === 'CHARGING' || target.status === 'MOVING_TO_CHARGER' || target.status === 'WAITING_FOR_CHARGER') {
           target.status = 'AVAILABLE';
           target.charging_status = 'IDLE';
           target.queue_position = null;
         }
+        target.current_action = `Manual Battery Set to ${battery}%`;
       }
-      target.current_action = `Manual Battery Set to ${battery}%`;
     }
     const updated = AutonomousDecisionEngine.processSimulationStep(stateCopy);
     setMissionState(updated);
@@ -339,6 +358,7 @@ export function useSimulation() {
     isPlaying,
     loading,
     error,
+    handleAcknowledgePredictiveRisk,
     handleAcknowledgeLowBattery,
     handlePlanMission,
     handleStartSimulation,
@@ -346,6 +366,7 @@ export function useSimulation() {
     handleResetSimulation,
     handleReplanNow,
     handleRefreshComparison,
+    simulatePredictiveRiskDemo,
     simulateRobot1LowBattery,
     simulateChargingQueue,
     triggerLowBattery,

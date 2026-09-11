@@ -1,6 +1,8 @@
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
-$env:PATH = "C:\Program Files\nodejs;" + "$env:LOCALAPPDATA\Programs\Python311;" + "$env:LOCALAPPDATA\Programs\Python311\Scripts;" + $env:PATH
+$NodeBin = "C:\Users\AKASH\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin"
+$PythonBin = "C:\Users\AKASH\AppData\Local\Programs\Python\Python311"
+$env:PATH = "$NodeBin;$PythonBin;$PythonBin\Scripts;C:\Program Files\nodejs;" + $env:PATH
 
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host "Starting Autonomous Mission Planner Control Center..." -ForegroundColor Cyan
@@ -8,13 +10,13 @@ Write-Host "========================================================" -Foregroun
 
 # 1. Start Backend in new window
 Write-Host "[1/2] Launching FastAPI Backend on http://127.0.0.1:8000 ..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$env:PATH = 'C:\Program Files\nodejs;' + '`$env:LOCALAPPDATA\Programs\Python311;' + '`$env:LOCALAPPDATA\Programs\Python311\Scripts;' + `$env:PATH; cd '$PSScriptRoot\backend'; & '`$env:LOCALAPPDATA\Programs\Python311\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$env:PATH = '$NodeBin;$PythonBin;$PythonBin\Scripts;' + `$env:PATH; cd '$PSScriptRoot\backend'; & '$PythonBin\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload"
 
 Start-Sleep -Seconds 2
 
 # 2. Start Frontend in new window
 Write-Host "[2/2] Launching React Vite Frontend on http://127.0.0.1:5173 ..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; `$env:PATH = 'C:\Program Files\nodejs;' + '`$env:LOCALAPPDATA\Programs\Python311;' + '`$env:LOCALAPPDATA\Programs\Python311\Scripts;' + `$env:PATH; cd '$PSScriptRoot\frontend'; npm.cmd run dev -- --host 127.0.0.1 --port 5173"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; `$env:PATH = '$NodeBin;$PythonBin;$PythonBin\Scripts;' + `$env:PATH; cd '$PSScriptRoot\frontend'; & '$NodeBin\node.exe' '$PSScriptRoot\frontend\node_modules\vite\bin\vite.js' --host 127.0.0.1 --port 5173"
 
 Start-Sleep -Seconds 3
 

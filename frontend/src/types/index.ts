@@ -40,8 +40,25 @@ export interface UAV {
   charging_status?: 'IDLE' | 'MOVING_TO_CHARGER' | 'WAITING_FOR_CHARGER' | 'CHARGING' | 'FULLY_CHARGED';
   current_action?: string;
   queue_position?: number | null;
+  predictive_risk_handled?: boolean;
+  predictive_risk_ack_pending?: boolean;
+  predicted_failure_minutes?: number;
   low_battery_handled?: boolean;
   low_battery_ack_pending?: boolean;
+}
+
+export interface PredictiveRiskAlert {
+  robot_id: string;
+  robot_name?: string;
+  battery: number;
+  risk_probability: number;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  task_id?: string | null;
+  task_name?: string | null;
+  replacement_id?: string | null;
+  predicted_failure_minutes: number;
+  timestamp: string;
+  reason?: string;
 }
 
 export interface Task {
@@ -115,6 +132,7 @@ export interface MissionState {
   last_replanning_event?: ReplanningEventDetails | null;
   charging_station?: ChargingStation;
   pending_acknowledgement?: LowBatteryAlert | null;
+  pending_predictive_alert?: PredictiveRiskAlert | null;
 }
 
 export interface MLMetrics {

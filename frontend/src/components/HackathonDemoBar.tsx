@@ -3,6 +3,7 @@ import { Zap, Users, RotateCcw, AlertTriangle, ShieldCheck, BatteryCharging, Arr
 import { ChargingStation } from '../types';
 
 interface HackathonDemoBarProps {
+  onSimulatePredictiveRiskDemo?: () => void;
   onSimulateRobot1LowBattery: () => void;
   onSimulateChargingQueue: () => void;
   onResetFleet: () => void;
@@ -12,6 +13,7 @@ interface HackathonDemoBarProps {
 }
 
 export const HackathonDemoBar: React.FC<HackathonDemoBarProps> = ({
+  onSimulatePredictiveRiskDemo,
   onSimulateRobot1LowBattery,
   onSimulateChargingQueue,
   onResetFleet,
@@ -32,8 +34,8 @@ export const HackathonDemoBar: React.FC<HackathonDemoBarProps> = ({
               <span className="text-xs font-black uppercase tracking-wider text-cyan-300">
                 Hackathon Demo Control
               </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
-                5-ROBOT AUTONOMY
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                PREDICT ➔ PREVENT ➔ REASSIGN ➔ REPLAN
               </span>
             </div>
             <div className="text-[11px] text-slate-300 flex items-center gap-2 mt-0.5">
@@ -56,14 +58,26 @@ export const HackathonDemoBar: React.FC<HackathonDemoBarProps> = ({
 
         {/* Right: 1-Click Interactive Demo Buttons */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Button 1: Robot 1 Battery = 10% */}
+          {/* Core Innovation Button: Predict & Prevent (Robot 1 Risk Surge) */}
+          {onSimulatePredictiveRiskDemo && (
+            <button
+              onClick={onSimulatePredictiveRiskDemo}
+              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/30 via-cyan-500/30 to-emerald-500/30 hover:from-amber-500/40 hover:to-emerald-500/40 text-amber-200 border border-amber-500/60 hover:border-amber-400 font-black text-xs transition flex items-center gap-1.5 shadow-lg shadow-amber-950/60"
+              title="Predicts failure risk on Robot 1 at 28% battery, triggers PREDICT -> PREVENT -> REASSIGN -> REPLAN flow live"
+            >
+              <Zap className="w-4 h-4 text-amber-400 animate-bounce" />
+              <span>⚡ 1-Click Demo: Predict & Prevent (Robot 1)</span>
+            </button>
+          )}
+
+          {/* Button 1: Robot 1 Emergency Battery = 10% */}
           <button
             onClick={onSimulateRobot1LowBattery}
             className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/50 hover:border-rose-400 font-bold text-xs transition flex items-center gap-1.5 shadow-lg shadow-rose-950/40"
-            title="Sets Robot 1 battery to 10%, triggers autonomous handover to Robot 4, and sends Robot 1 to charge"
+            title="Sets Robot 1 battery to 10% emergency threshold"
           >
-            <Zap className="w-3.5 h-3.5 text-rose-400" />
-            <span>Simulate Robot 1 Battery = 10%</span>
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            <span>Emergency 10% Alert</span>
           </button>
 
           {/* Button 2: Simulate Charging Queue */}
