@@ -170,6 +170,68 @@ export function calculateRoute(
 
 export class AutonomousDecisionEngine {
   /**
+   * Evaluates available fleet and selects the best candidate for task handover.
+   * Ranks candidates based on battery level, proximity to task, and lowest risk score.
+   */
+  public static findBestReplacementRobot(
+    state: MissionState,
+    excludeRobotId?: string,
+    targetTask?: Task | null
+  ): UAV | null {
+    const candidates = state.uavs.filter(
+      (u) =>
+        u.id !== excludeRobotId &&
+        (u.status === 'AVAILABLE' || u.status === 'IDLE') &&
+        u.battery > 30
+    );
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => {
+      let scoreA = a.battery * 1.5 - (a.risk_probability || 0) * 0.5;
+      let scoreB = b.battery * 1.5 - (b.risk_probability || 0) * 0.5;
+
+      if (targetTask) {
+        const distA = Math.hypot(a.x - targetTask.x, a.y - targetTask.y);
+        const distB = Math.hypot(b.x - targetTask.x, b.y - targetTask.y);
+        scoreA -= distA * 1.0;
+        scoreB -= distB * 1.0;
+      }
+
+      return scoreB - scoreA;
+    });
+
+    return candidates[0];
+  }
+
+  /**
+   * Reassigns unassigned/interrupted tasks to available standby robots dynamically.
+   */
+  public static reassignTasksToAvailableRobots(state: MissionState): void {
+    const unassignedTasks = state.tasks.filter(
+      (t) => t.status !== 'COMPLETED' && (!t.assigned_uav_id || !state.uavs.some((u) => u.current_task_id === t.id && u.status === 'WORKING'))
+    );
+
+    for (const task of unassignedTasks) {
+      const bestBot = AutonomousDecisionEngine.findBestReplacementRobot(state, undefined, task);
+      if (bestBot) {
+        bestBot.status = 'WORKING';
+        bestBot.current_task_id = task.id;
+        bestBot.target_x = task.x;
+        bestBot.target_y = task.y;
+        bestBot.route = calculateSafeRoute([bestBot.x, bestBot.y], [task.x, task.y], state.obstacles);
+        bestBot.route_index = 0;
+        bestBot.current_action = `Assigned task: ${task.name}`;
+
+        task.assigned_uav_id = bestBot.id;
+        task.status = 'ASSIGNED';
+      }
+    }
+  }
+
+  /**
    * Evaluates simulation state, movement, and progressive charging.
    * STRICT GUARD: Low battery events trigger ONE acknowledgement modal and will NEVER loop.
    */
@@ -217,15 +279,8 @@ export class AutonomousDecisionEngine {
 
         const task = state.tasks.find((t) => t.id === bot.current_task_id && t.status !== 'COMPLETED');
 
-        // Identify suggested replacement candidate
-        let replacementCandidate = state.uavs.find(
-          (u) => u.id === 'Robot 4' && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
-        );
-        if (!replacementCandidate) {
-          replacementCandidate = state.uavs.find(
-            (u) => u.id !== bot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
-          );
-        }
+        // Identify suggested replacement candidate dynamically using priority ranking
+        const replacementCandidate = AutonomousDecisionEngine.findBestReplacementRobot(state, bot.id, task);
 
         // Set the active modal state for this robot (ONE MODAL ONLY)
         state.pending_acknowledgement = {
@@ -238,6 +293,8 @@ export class AutonomousDecisionEngine {
           timestamp: `${now}.${Date.now().toString().slice(-4)}`,
           reason: `${bot.id} reached battery threshold (${bot.battery.toFixed(1)}%). Requires charging station dispatch.`
         };
+
+        console.log(`[LOW_BATTERY_CYCLE_FIRED] Robot=${bot.id} Battery=${bot.battery}% Time=${now}`);
 
         log(
           'BATTERY_ALERT_TRIGGERED',
@@ -358,6 +415,9 @@ export class AutonomousDecisionEngine {
               }
             }
           }
+
+          // Check if there are any unassigned active tasks for this newly available fully-charged robot
+          AutonomousDecisionEngine.reassignTasksToAvailableRobots(state);
         }
       }
 
@@ -408,6 +468,8 @@ export class AutonomousDecisionEngine {
       return state;
     }
 
+    console.log(`[LOW_BATTERY_HANDOVER_STARTED] Robot=${lowBot.id} Time=${now}`);
+
     // 1. Mark event handled on this specific robot
     lowBot.low_battery_ack_pending = false;
     lowBot.low_battery_handled = true;
@@ -423,17 +485,10 @@ export class AutonomousDecisionEngine {
     }
     const charger = state.charging_station;
 
-    // 2. SAFE TASK HANDOVER
+    // 2. SAFE TASK HANDOVER VIA DYNAMIC PRIORITY QUEUE
     const originalTask = state.tasks.find((t) => t.id === lowBot.current_task_id && t.status !== 'COMPLETED');
     if (originalTask) {
-      let replacement = state.uavs.find(
-        (u) => u.id === 'Robot 4' && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
-      );
-      if (!replacement) {
-        replacement = state.uavs.find(
-          (u) => u.id !== lowBot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
-        );
-      }
+      const replacement = AutonomousDecisionEngine.findBestReplacementRobot(state, lowBot.id, originalTask);
 
       if (replacement) {
         const abandonedTaskId = originalTask.id;
@@ -444,7 +499,7 @@ export class AutonomousDecisionEngine {
         replacement.current_task_id = abandonedTaskId;
         replacement.target_x = originalTask.x;
         replacement.target_y = originalTask.y;
-        replacement.route = calculateRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
+        replacement.route = calculateSafeRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
         replacement.route_index = 0;
         replacement.current_action = `Taking over ${lowBot.id}'s task (${originalTask.name})`;
 
@@ -454,6 +509,20 @@ export class AutonomousDecisionEngine {
 
         state.replanning_count = (state.replanning_count || 0) + 1;
         state.prevented_failures = (state.prevented_failures || 0) + 1;
+        state.last_replanning_event = {
+          type: 'BATTERY_REROUTE',
+          title: `Task Handover: ${lowBot.id} ➔ ${replacement.id}`,
+          task_id: abandonedTaskId,
+          task_name: originalTask.name,
+          old_uav_id: lowBot.id,
+          old_uav_risk: lowBot.risk_probability || 0,
+          new_uav_id: replacement.id,
+          new_uav_risk: replacement.risk_probability || 0,
+          reason: 'Autonomous Low Battery Handover',
+          new_route: replacement.route
+        };
+
+        console.log(`[LOW_BATTERY_HANDOVER_COMPLETED] Retired=${lowBot.id} Assigned=${replacement.id} Task=${abandonedTaskId} Time=${now}`);
 
         log(
           'TASK_HANDOVER_ACKNOWLEDGED',
@@ -464,11 +533,13 @@ export class AutonomousDecisionEngine {
       }
     }
 
-    // 3. ROUTE LOW BATTERY ROBOT TO CHARGING STATION
+    // 3. ROUTE LOW BATTERY ROBOT TO CHARGING STATION VIA CLEAN SAFE PATH
     lowBot.target_x = charger.x;
     lowBot.target_y = charger.y;
     lowBot.route = calculateSafeReturnPath([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
     lowBot.route_index = 0;
+
+    console.log(`[LOW_BATTERY_REROUTE_COMPLETED] Robot=${lowBot.id} RouteWaypoints=${lowBot.route.length} Time=${now}`);
 
     log(
       'ROUTED_TO_CHARGER',
@@ -487,6 +558,14 @@ export class AutonomousDecisionEngine {
     const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
     const robot1 = state.uavs.find((u) => u.id === 'Robot 1' || u.id === 'UAV-01');
     if (robot1) {
+      if (robot1.status === 'CHARGING' || robot1.status === 'MOVING_TO_CHARGER' || robot1.status === 'WAITING_FOR_CHARGER') {
+        robot1.status = 'WORKING';
+        robot1.charging_status = 'IDLE';
+        robot1.queue_position = null;
+        if (state.charging_station?.currently_charging_uav_id === robot1.id) {
+          state.charging_station.currently_charging_uav_id = null;
+        }
+      }
       robot1.battery = 10.0;
       robot1.low_battery_handled = false; // Trigger new event
       robot1.low_battery_ack_pending = false;
@@ -501,6 +580,14 @@ export class AutonomousDecisionEngine {
     const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
     const robot5 = state.uavs.find((u) => u.id === 'Robot 5' || u.id === 'UAV-05');
     if (robot5) {
+      if (robot5.status === 'CHARGING' || robot5.status === 'MOVING_TO_CHARGER' || robot5.status === 'WAITING_FOR_CHARGER') {
+        robot5.status = 'AVAILABLE';
+        robot5.charging_status = 'IDLE';
+        robot5.queue_position = null;
+        if (state.charging_station?.currently_charging_uav_id === robot5.id) {
+          state.charging_station.currently_charging_uav_id = null;
+        }
+      }
       robot5.battery = 8.0;
       robot5.low_battery_handled = false;
       robot5.low_battery_ack_pending = false;

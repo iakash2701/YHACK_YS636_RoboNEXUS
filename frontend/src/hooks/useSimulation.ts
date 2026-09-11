@@ -215,24 +215,27 @@ export function useSimulation() {
 
   // ONE-TIME ACKNOWLEDGEMENT HANDLER
   const handleAcknowledgeLowBattery = useCallback((robotId: string) => {
-    if (!missionState) return;
-    const updated = AutonomousDecisionEngine.acknowledgeLowBatteryEvent(missionState, robotId);
-    setMissionState(updated);
-  }, [missionState]);
+    setMissionState(prev => {
+      if (!prev) return null;
+      return AutonomousDecisionEngine.acknowledgeLowBatteryEvent(prev, robotId);
+    });
+  }, []);
 
   // 1-Click Hackathon Demo Triggers
   const simulateRobot1LowBattery = () => {
-    if (!missionState) return;
     setIsPlaying(true);
-    const updated = AutonomousDecisionEngine.triggerDemoRobot1LowBattery(missionState);
-    setMissionState(updated);
+    setMissionState(prev => {
+      if (!prev) return null;
+      return AutonomousDecisionEngine.triggerDemoRobot1LowBattery(prev);
+    });
   };
 
   const simulateChargingQueue = () => {
-    if (!missionState) return;
     setIsPlaying(true);
-    const updated = AutonomousDecisionEngine.triggerDemoChargingQueue(missionState);
-    setMissionState(updated);
+    setMissionState(prev => {
+      if (!prev) return null;
+      return AutonomousDecisionEngine.triggerDemoChargingQueue(prev);
+    });
   };
 
   // What-If Triggers with per-robot reset on manual change
