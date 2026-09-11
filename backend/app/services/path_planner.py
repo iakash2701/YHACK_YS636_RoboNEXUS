@@ -8,16 +8,16 @@ class PathPlanner:
         self.map_width = map_width
         self.map_height = map_height
 
-    def is_collision(self, x: int, y: int, obstacles: List[Dict[str, Any]]) -> bool:
-        """Checks if grid coordinate (x, y) is inside any rectangular obstacle or out of bounds."""
-        if x < 0 or x >= self.map_width or y < 0 or y >= self.map_height:
+    def is_collision(self, x: float, y: float, obstacles: List[Dict[str, Any]], margin: float = 2.0) -> bool:
+        """Checks if coordinate (x, y) is inside any rectangular obstacle (expanded by safety margin) or out of bounds."""
+        if x < 0.5 or x >= self.map_width - 0.5 or y < 0.5 or y >= self.map_height - 0.5:
             return True
         for obs in obstacles:
             ox = obs.get("x", 0)
             oy = obs.get("y", 0)
             ow = obs.get("width", 0)
             oh = obs.get("height", 0)
-            if ox <= x < ox + ow and oy <= y < oy + oh:
+            if (ox - margin) <= x <= (ox + ow + margin) and (oy - margin) <= y <= (oy + oh + margin):
                 return True
         return False
 

@@ -43,6 +43,8 @@ export interface UAV {
   predictive_risk_handled?: boolean;
   predictive_risk_ack_pending?: boolean;
   predicted_failure_minutes?: number;
+  low_battery_handled?: boolean;
+  low_battery_ack_pending?: boolean;
 }
 
 export interface PredictiveRiskAlert {
