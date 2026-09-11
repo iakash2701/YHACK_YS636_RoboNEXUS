@@ -71,16 +71,25 @@ export function App() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'control' | 'analytics' | 'evaluation' | 'ml'>('control');
 
-  // Operator Authentication State
+  // Operator Authentication State (Persistent Across Reloads)
   const [operatorProfile, setOperatorProfile] = useState<OperatorProfile | null>(() => {
     try {
       const saved = localStorage.getItem('robonexus_operator');
-      return saved ? JSON.parse(saved) : null;
+      if (saved) return JSON.parse(saved);
+      const defaultProfile: OperatorProfile = {
+        callsign: 'FLIGHT-DIRECTOR-01',
+        role: 'Autonomous Systems Flight Director',
+        clearanceLevel: 'LEVEL 5 - HACKATHON DEMO',
+        badgeId: 'OP-7749',
+        authProvider: 'DEMO'
+      };
+      localStorage.setItem('robonexus_operator', JSON.stringify(defaultProfile));
+      return defaultProfile;
     } catch {
       return null;
     }
   });
-  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(() => !localStorage.getItem('robonexus_operator'));
+  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
 
   const handleLoginSuccess = (profile: OperatorProfile) => {
     setOperatorProfile(profile);
