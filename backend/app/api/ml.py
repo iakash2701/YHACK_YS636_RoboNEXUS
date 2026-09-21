@@ -42,3 +42,15 @@ def predict_uav_risk(payload: Dict[str, Any] = Body(...)):
 def retrain_model(num_samples: int = 8000):
     metrics = train_and_save_risk_model(num_samples=num_samples)
     return {"status": "SUCCESS", "message": f"Trained Random Forest on {num_samples} synthetic simulation samples", "metrics": metrics}
+
+@router.get("/dataset")
+def get_dataset_samples(limit: int = 100):
+    from app.ml.dataset import generate_synthetic_mission_dataset
+    df = generate_synthetic_mission_dataset(num_samples=8000)
+    samples = df.head(limit).to_dict(orient="records")
+    return {
+        "total_samples": len(df),
+        "returned_samples": len(samples),
+        "features": list(df.columns),
+        "samples": samples
+    }

@@ -11,22 +11,29 @@ import {
   Download,
   Volume2,
   VolumeX,
+  Lock,
+  UserCheck,
 } from 'lucide-react';
+import { OperatorProfile } from './LoginModal';
 import { MissionState } from '../types';
 import { tacticalAudio } from '../services/soundEffects';
 
 interface HeaderProps {
   missionState: MissionState | null;
+  operatorProfile?: OperatorProfile | null;
   onOpenConfig: () => void;
   onOpenPresets: () => void;
   onOpenExport: () => void;
+  onLockTerminal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   missionState,
+  operatorProfile,
   onOpenConfig,
   onOpenPresets,
   onOpenExport,
+  onLockTerminal,
 }) => {
   const [isMuted, setIsMuted] = useState(false);
 
@@ -178,6 +185,28 @@ export const Header: React.FC<HeaderProps> = ({
           <Cpu className="w-3.5 h-3.5" />
           <span>Config</span>
         </button>
+
+        {/* Operator Profile Badge & Lock Terminal Button */}
+        {operatorProfile && (
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+            <div className="flex items-center gap-1.5 bg-cyan-500/10 px-2.5 py-1 rounded-md border border-cyan-500/30 text-[11px]">
+              <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-cyan-200 font-bold">{operatorProfile.callsign}</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                {operatorProfile.badgeId}
+              </span>
+            </div>
+            {onLockTerminal && (
+              <button
+                onClick={onLockTerminal}
+                title="Lock Operator Terminal / Switch User"
+                className="p-1.5 rounded-md bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:border-rose-400 transition"
+              >
+                <Lock className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

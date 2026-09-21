@@ -14,6 +14,202 @@ export const INITIAL_CHARGING_STATION: ChargingStation = {
   queue: []
 };
 
+export const DEFAULT_DEMO_OBSTACLES: Obstacle[] = [
+  { id: 'OBS-01', x: 18, y: 8, width: 8, height: 14 },
+  { id: 'OBS-02', x: 28, y: 28, width: 10, height: 10 },
+  { id: 'OBS-03', x: 8, y: 24, width: 6, height: 10 }
+];
+
+export interface Box {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+export const SAFETY_MARGIN = 2.0;
+
+export function getExpandedBox(obs: Obstacle, margin: number = SAFETY_MARGIN): Box {
+  return {
+    minX: Math.max(0.5, obs.x - margin),
+    maxX: Math.min(49.5, obs.x + obs.width + margin),
+    minY: Math.max(0.5, obs.y - margin),
+    maxY: Math.min(49.5, obs.y + obs.height + margin),
+  };
+}
+
+/**
+ * Checks if line segment p1 -> p2 intersects or enters the box boundary/interior.
+ */
+export function segmentIntersectsBox(
+  p1: [number, number],
+  p2: [number, number],
+  box: Box
+): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = p2[0] - p1[0];
+  const dy = p2[1] - p1[1];
+
+  const checks = [
+    [-dx, p1[0] - box.minX],
+    [dx, box.maxX - p1[0]],
+    [-dy, p1[1] - box.minY],
+    [dy, box.maxY - p1[1]],
+  ];
+
+  for (const [p, q] of checks) {
+    if (p === 0) {
+      if (q < 0) return false;
+    } else {
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return t0 <= t1;
+}
+
+/**
+ * Checks if segment p1 -> p2 is completely clear of ALL expanded NO-FLY zones.
+ */
+export function isSegmentSafe(
+  p1: [number, number],
+  p2: [number, number],
+  obstacles: Obstacle[],
+  margin: number = SAFETY_MARGIN
+): boolean {
+  for (const obs of obstacles) {
+    // Interior box with safety margin minus tiny epsilon for boundary movement
+    const interiorBox = getExpandedBox(obs, margin - 0.05);
+    if (segmentIntersectsBox(p1, p2, interiorBox)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Interpolates waypoints into step-by-step coordinates for tick simulation.
+ */
+export function interpolatePathSteps(waypoints: [number, number][]): [number, number][] {
+  if (waypoints.length <= 1) return waypoints;
+  const fullPath: [number, number][] = [waypoints[0]];
+
+  for (let k = 0; k < waypoints.length - 1; k++) {
+    const p1 = waypoints[k];
+    const p2 = waypoints[k + 1];
+    const dist = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+    const steps = Math.max(2, Math.ceil(dist / 2.0));
+
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const px = Math.round((p1[0] + (p2[0] - p1[0]) * t) * 10) / 10;
+      const py = Math.round((p1[1] + (p2[1] - p1[1]) * t) * 10) / 10;
+      const last = fullPath[fullPath.length - 1];
+      if (last[0] !== px || last[1] !== py) {
+        fullPath.push([px, py]);
+      }
+    }
+  }
+  return fullPath;
+}
+
+/**
+ * Global NO-FLY Zone Safe Path Planner.
+ * Calculates shortest safe path from start to end around ALL NO-FLY obstacles.
+ */
+export function calculateSafePath(
+  start: [number, number],
+  end: [number, number],
+  obstacles: Obstacle[] = []
+): [number, number][] {
+  if (!obstacles || obstacles.length === 0 || isSegmentSafe(start, end, obstacles, SAFETY_MARGIN)) {
+    return interpolatePathSteps([start, end]);
+  }
+
+  const nodes: [number, number][] = [start, end];
+
+  for (const obs of obstacles) {
+    const box = getExpandedBox(obs, SAFETY_MARGIN);
+    nodes.push([box.minX, box.minY]);
+    nodes.push([box.maxX, box.minY]);
+    nodes.push([box.maxX, box.maxY]);
+    nodes.push([box.minX, box.maxY]);
+  }
+
+  const uniqueNodes: [number, number][] = [];
+  for (const n of nodes) {
+    if (!uniqueNodes.some((u) => Math.hypot(u[0] - n[0], u[1] - n[1]) < 0.1)) {
+      uniqueNodes.push(n);
+    }
+  }
+
+  const N = uniqueNodes.length;
+  const graph: { to: number; dist: number }[][] = Array.from({ length: N }, () => []);
+
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      const u = uniqueNodes[i];
+      const v = uniqueNodes[j];
+
+      if (isSegmentSafe(u, v, obstacles, SAFETY_MARGIN)) {
+        const d = Math.hypot(u[0] - v[0], u[1] - v[1]);
+        graph[i].push({ to: j, dist: d });
+        graph[j].push({ to: i, dist: d });
+      }
+    }
+  }
+
+  const dist = new Array(N).fill(Infinity);
+  const prev = new Array(N).fill(-1);
+  const visited = new Array(N).fill(false);
+
+  dist[0] = 0;
+
+  for (let step = 0; step < N; step++) {
+    let u = -1;
+    let minDist = Infinity;
+
+    for (let i = 0; i < N; i++) {
+      if (!visited[i] && dist[i] < minDist) {
+        minDist = dist[i];
+        u = i;
+      }
+    }
+
+    if (u === -1 || u === 1) break;
+    visited[u] = true;
+
+    for (const edge of graph[u]) {
+      if (!visited[edge.to] && dist[u] + edge.dist < dist[edge.to]) {
+        dist[edge.to] = dist[u] + edge.dist;
+        prev[edge.to] = u;
+      }
+    }
+  }
+
+  if (dist[1] === Infinity) {
+    return interpolatePathSteps([start, end]);
+  }
+
+  const waypoints: [number, number][] = [];
+  let curr = 1;
+  while (curr !== -1) {
+    waypoints.unshift(uniqueNodes[curr]);
+    curr = prev[curr];
+  }
+
+  return interpolatePathSteps(waypoints);
+}
+
+export const calculateRoute = calculateSafePath;
+
 // 5-Robot Default Initial Fleet Configuration
 export const DEFAULT_5_ROBOTS: UAV[] = [
   {
@@ -31,7 +227,7 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     current_task_id: 'TASK-001',
     target_x: 30.0,
     target_y: 18.0,
-    route: [[4, 6], [10, 10], [16, 12], [22, 14], [28, 16], [30, 18]],
+    route: calculateSafePath([4.0, 6.0], [30.0, 18.0], DEFAULT_DEMO_OBSTACLES),
     route_index: 1,
     total_energy_consumed: 12.5,
     risk_level: 'LOW',
@@ -57,7 +253,7 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     current_task_id: 'TASK-002',
     target_x: 15.0,
     target_y: 38.0,
-    route: [[12, 6], [12, 14], [14, 22], [14, 30], [15, 38]],
+    route: calculateSafePath([12.0, 6.0], [15.0, 38.0], DEFAULT_DEMO_OBSTACLES),
     route_index: 1,
     total_energy_consumed: 8.0,
     risk_level: 'LOW',
@@ -83,7 +279,7 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     current_task_id: 'TASK-003',
     target_x: 42.0,
     target_y: 42.0,
-    route: [[6, 16], [14, 20], [22, 26], [32, 34], [42, 42]],
+    route: calculateSafePath([6.0, 16.0], [42.0, 42.0], DEFAULT_DEMO_OBSTACLES),
     route_index: 1,
     total_energy_consumed: 14.0,
     risk_level: 'LOW',
@@ -144,7 +340,6 @@ export const DEFAULT_5_ROBOTS: UAV[] = [
     current_action: 'Standby in Fleet Pool',
     queue_position: null,
     low_battery_handled: false,
-    low_battery_ack_pending: false
   }
 ];
 
