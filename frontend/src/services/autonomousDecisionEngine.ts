@@ -1,5 +1,5 @@
-import { MissionState, UAV, Task, Obstacle, ChargingStation, MissionEvent, LowBatteryAlert } from '../types';
-import { calculateSafeRoute, calculateSafeReturnPath, isPointInAnyObstacle, isSegmentBlockedByObstacle, ROBOT_SAFETY_MARGIN } from './pathPlanner';
+import { MissionState, UAV, Task, Obstacle, ChargingStation, MissionEvent, LowBatteryAlert } from '../types/index.ts';
+import { calculateSafeRoute, calculateSafeReturnPath, isPointInAnyObstacle, isSegmentBlockedByObstacle, isDirectPathClear, ROBOT_SAFETY_MARGIN } from './pathPlanner.ts';
 
 export const LOW_BATTERY_THRESHOLD = 10;
 export const CHARGING_STATION_COORDS = { x: 25, y: 25 };
@@ -330,16 +330,17 @@ export class AutonomousDecisionEngine {
         bot.status !== 'CHARGING' &&
         bot.status !== 'MOVING_TO_CHARGER' &&
         bot.status !== 'WAITING_FOR_CHARGER' &&
-        bot.status !== 'RETURNING' &&
-        !bot.predictive_risk_handled;
+        bot.status !== 'RETURNING';
 
-      // RECOVERY RESET: If robot battery has recovered above threshold (> 10%), reset low-battery event locks!
+      // RECOVERY RESET: If robot battery has recovered above threshold (> 10%), reset low-battery & predictive locks for next cycle!
       if (!isLow && isNotInChargingFlow) {
         bot.low_battery_handled = false;
         bot.low_battery_ack_pending = false;
+        bot.predictive_risk_handled = false;
+        bot.predictive_risk_ack_pending = false;
       }
 
-      // Detect transition to emergency low battery requiring ONE-TIME acknowledgement
+      // Detect transition to emergency low battery requiring ONE-TIME acknowledgement per cycle
       if (isLow && !bot.low_battery_handled && !bot.low_battery_ack_pending && isNotInChargingFlow) {
         bot.low_battery_ack_pending = true;
         bot.status = 'AWAITING_ACK';
@@ -372,11 +373,31 @@ export class AutonomousDecisionEngine {
       }
     }
 
-    // 2. MOVEMENT & CHARGING STATION LOGIC
+    // 2. MOVEMENT & CHARGING STATION LOGIC WITH CONTINUOUS NO-FLY ZONE SAFETY GUARD
     for (const bot of state.uavs) {
       // Movement along routes
       if (bot.route && bot.route.length > 0 && bot.route_index < bot.route.length) {
         const nextPt = bot.route[bot.route_index];
+
+        // Continuous Movement Safety Guard: Prevent robot from entering any NO-FLY zone
+        const isNextBlocked =
+          isPointInAnyObstacle(nextPt[0], nextPt[1], state.obstacles, ROBOT_SAFETY_MARGIN * 0.4) ||
+          !isDirectPathClear([bot.x, bot.y], nextPt, state.obstacles, ROBOT_SAFETY_MARGIN * 0.4);
+
+        if (isNextBlocked) {
+          // Blocked by dynamic obstacle/NFZ! Hold position and replan safely
+          if (bot.status === 'MOVING_TO_CHARGER' && state.charging_station) {
+            bot.route = calculateSafeReturnPath([bot.x, bot.y], [charger.x, charger.y], state.obstacles);
+            bot.route_index = 0;
+            bot.current_action = '⚠️ Rerouted return path around dynamic NO-FLY zone';
+          } else if (typeof bot.target_x === 'number' && typeof bot.target_y === 'number') {
+            bot.route = calculateSafeRoute([bot.x, bot.y], [bot.target_x, bot.target_y], state.obstacles);
+            bot.route_index = 0;
+            bot.current_action = '⚠️ Rerouted mission route around dynamic NO-FLY zone';
+          }
+          continue; // Hold current position on this step
+        }
+
         bot.x = nextPt[0];
         bot.y = nextPt[1];
         bot.route_index += 1;
@@ -430,6 +451,7 @@ export class AutonomousDecisionEngine {
               task.status = 'COMPLETED';
               task.completed_at = now;
               bot.status = 'AVAILABLE';
+              bot.charging_status = 'IDLE';
               bot.current_task_id = null;
               bot.current_action = `Completed ${task.name}. Standing by in pool.`;
               log(
@@ -442,7 +464,7 @@ export class AutonomousDecisionEngine {
         }
       }
 
-      // 3. PROGRESSIVE CHARGING (10% -> 20% -> 30% ... -> 100%)
+      // 3. PROGRESSIVE CHARGING (10% -> 20% -> 30% ... -> 100%) - REUSABLE ACROSS ALL CYCLES
       if (bot.status === 'CHARGING') {
         bot.battery = Math.min(100, Math.round((bot.battery + CHARGING_SPEED_PER_STEP) * 10) / 10);
         bot.current_action = `Charging: ${bot.battery.toFixed(0)}% (Fast DC Rapid Charge)`;
@@ -452,8 +474,12 @@ export class AutonomousDecisionEngine {
           bot.battery = 100;
           bot.status = 'AVAILABLE';
           bot.charging_status = 'FULLY_CHARGED';
-          bot.low_battery_handled = false; // Reset lock for FUTURE low battery episodes
+          // Cleanly reset all charging and risk locks so subsequent cycles 2, 3, etc. work repeatedly
+          bot.low_battery_handled = false;
           bot.low_battery_ack_pending = false;
+          bot.predictive_risk_handled = false;
+          bot.predictive_risk_ack_pending = false;
+          bot.queue_position = null;
           bot.current_action = 'Fully Charged (100%) - Returned to Available Pool';
           log(
             'CHARGING_COMPLETE',
@@ -483,7 +509,7 @@ export class AutonomousDecisionEngine {
             }
           }
 
-          // Check if there are any unassigned active tasks for this newly available fully-charged robot
+          // Automatically reassign pending active tasks to this freshly charged available robot
           AutonomousDecisionEngine.reassignTasksToAvailableRobots(state);
         }
       }
@@ -507,7 +533,7 @@ export class AutonomousDecisionEngine {
    * 1. Closes the alert permanently for this event.
    * 2. Marks the specific robot as acknowledged & handled.
    * 3. Selects replacement robot and transfers active task without data loss.
-   * 4. Dispatches low battery robot toward charging station.
+   * 4. Dispatches low battery robot toward charging station via clean safe return path.
    */
   public static acknowledgeLowBatteryEvent(prevState: MissionState, robotId: string): MissionState {
     const state = JSON.parse(JSON.stringify(prevState)) as MissionState;
@@ -563,6 +589,7 @@ export class AutonomousDecisionEngine {
 
         // Assign Replacement Robot
         replacement.status = 'WORKING';
+        replacement.charging_status = 'IDLE';
         replacement.current_task_id = abandonedTaskId;
         replacement.target_x = originalTask.x;
         replacement.target_y = originalTask.y;
@@ -600,7 +627,7 @@ export class AutonomousDecisionEngine {
       }
     }
 
-    // 3. ROUTE LOW BATTERY ROBOT TO CHARGING STATION VIA CLEAN SAFE PATH
+    // 3. ROUTE LOW BATTERY ROBOT TO CHARGING STATION VIA CLEAN SAFE PATH (NEVER CROSSES NO-FLY ZONE)
     lowBot.target_x = charger.x;
     lowBot.target_y = charger.y;
     lowBot.route = calculateSafeReturnPath([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
@@ -621,7 +648,7 @@ export class AutonomousDecisionEngine {
   /**
    * Executes PREDICT -> PREVENT -> REASSIGN -> REPLAN workflow:
    * 1. Acknowledges predictive risk event before failure occurs.
-   * 2. Reassigns task from high-risk robot to best available replacement (Robot 4).
+   * 2. Reassigns task from high-risk robot to best available replacement.
    * 3. Recalculates collision-free A* route for replacement robot.
    * 4. Safe transit for original robot to charging station avoiding NO-FLY zones.
    */
@@ -658,27 +685,21 @@ export class AutonomousDecisionEngine {
     }
     const charger = state.charging_station;
 
-    // SAFE TASK REASSIGNMENT
+    // SAFE TASK REASSIGNMENT VIA DYNAMIC PRIORITY QUEUE
     const originalTask = state.tasks.find((t) => t.id === lowBot.current_task_id && t.status !== 'COMPLETED');
     if (originalTask) {
-      let replacement = state.uavs.find(
-        (u) => u.id === 'Robot 4' && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
-      );
-      if (!replacement) {
-        replacement = state.uavs.find(
-          (u) => u.id !== lowBot.id && (u.status === 'AVAILABLE' || u.status === 'IDLE') && u.battery > 30
-        );
-      }
+      const replacement = AutonomousDecisionEngine.findBestReplacementRobot(state, lowBot.id, originalTask);
 
       if (replacement) {
         const abandonedTaskId = originalTask.id;
         lowBot.current_task_id = null;
 
         replacement.status = 'WORKING';
+        replacement.charging_status = 'IDLE';
         replacement.current_task_id = abandonedTaskId;
         replacement.target_x = originalTask.x;
         replacement.target_y = originalTask.y;
-        replacement.route = calculateRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
+        replacement.route = calculateSafeRoute([replacement.x, replacement.y], [originalTask.x, originalTask.y], state.obstacles);
         replacement.route_index = 0;
         replacement.current_action = `Preventive Takeover: Continuing ${originalTask.name}`;
 
@@ -715,10 +736,10 @@ export class AutonomousDecisionEngine {
       }
     }
 
-    // ROUTE ORIGINAL ROBOT SAFELY BACK TO CHARGING STATION
+    // ROUTE ORIGINAL ROBOT SAFELY BACK TO CHARGING STATION VIA CLEAN SAFE RETURN PATH
     lowBot.target_x = charger.x;
     lowBot.target_y = charger.y;
-    lowBot.route = calculateRoute([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
+    lowBot.route = calculateSafeReturnPath([lowBot.x, lowBot.y], [charger.x, charger.y], state.obstacles);
     lowBot.route_index = 0;
 
     log(

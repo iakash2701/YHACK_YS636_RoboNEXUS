@@ -1,4 +1,4 @@
-import { Obstacle } from '../types';
+import { Obstacle } from '../types/index.ts';
 
 export const ROBOT_SAFETY_MARGIN = 2.0; // Distance buffer around red no-fly zones accounting for robot visual size
 
@@ -159,9 +159,36 @@ function simplifyOrthogonalPath(points: [number, number][]): [number, number][] 
 }
 
 /**
+ * Validates that every waypoint and line segment in a route completely avoids all NO-FLY zones.
+ */
+export function validateRouteSafety(
+  route: [number, number][],
+  obstacles: Obstacle[],
+  margin: number = ROBOT_SAFETY_MARGIN * 0.5
+): boolean {
+  if (!route || route.length <= 1) return true;
+
+  for (let i = 0; i < route.length; i++) {
+    const pt = route[i];
+    if (isPointInAnyObstacle(pt[0], pt[1], obstacles, margin)) {
+      return false;
+    }
+  }
+
+  for (let i = 0; i < route.length - 1; i++) {
+    if (!isDirectPathClear(route[i], route[i + 1], obstacles, margin)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Calculates a safe collision-free route from start to target avoiding all red NO-FLY zones.
  * If direct line has no obstacle, returns direct path.
  * If blocked, calculates orthogonal (UP/DOWN/LEFT/RIGHT) detour waypoints around obstacles.
+ * NEVER returns a route crossing a NO-FLY zone.
  */
 export function calculateSafeRoute(
   start: [number, number],
@@ -181,9 +208,18 @@ export function calculateSafeRoute(
     return [[sx, sy]];
   }
 
+  // Safety constraint: If target itself is inside a NO-FLY zone, do NOT enter! Hold position.
+  if (isPointInAnyObstacle(tx, ty, obstacles, 0.5)) {
+    console.warn(`[SAFETY_ALERT] Target (${tx}, ${ty}) is inside a NO-FLY zone. Halting to preserve safety.`);
+    return [[sx, sy]];
+  }
+
   // 1. Direct path check: If direct route does not intersect any obstacle, use direct path
   if (isDirectPathClear([sx, sy], [tx, ty], obstacles, margin)) {
-    return interpolateWaypoints([[sx, sy], [tx, ty]], 1.2);
+    const directRoute = interpolateWaypoints([[sx, sy], [tx, ty]], 1.2);
+    if (validateRouteSafety(directRoute, obstacles, margin * 0.4)) {
+      return directRoute;
+    }
   }
 
   // 2. Obstacle Avoidance Path Planner (Deterministic Orthogonal A* on Grid)
@@ -212,9 +248,9 @@ export function calculateSafeRoute(
   const isBlocked = (gx: number, gy: number): boolean => {
     const rx = gx * gridResolution;
     const ry = gy * gridResolution;
-    // Don't block target or start nodes even if on boundary
+    // Don't block target or start nodes even if on boundary unless truly inside obstacle
     if ((gx === targetGX && gy === targetGY) || (gx === startGX && gy === startGY)) {
-      return false;
+      return isPointInAnyObstacle(rx, ry, obstacles, 0.2);
     }
     return isPointInAnyObstacle(rx, ry, obstacles, margin);
   };
@@ -296,10 +332,13 @@ export function calculateSafeRoute(
     rawPath.unshift([sx, sy]);
 
     const simplifiedWaypoints = simplifyOrthogonalPath(rawPath);
-    return interpolateWaypoints(simplifiedWaypoints, 1.2);
+    const interpolated = interpolateWaypoints(simplifiedWaypoints, 1.2);
+    if (validateRouteSafety(interpolated, obstacles, margin * 0.4)) {
+      return interpolated;
+    }
   }
 
-  // Fallback: If grid search failed due to map edges, generate safe detour waypoints around blocking obstacles
+  // Fallback: Safe detour waypoints around blocking obstacles
   const blockingObs = obstacles.filter(obs => isSegmentBlockedByObstacle([sx, sy], [tx, ty], obs, margin));
   if (blockingObs.length > 0) {
     const obs = blockingObs[0];
@@ -313,19 +352,24 @@ export function calculateSafeRoute(
       [[sx, sy], [leftX, topY], [rightX, topY], [tx, ty]], // Top Route
       [[sx, sy], [leftX, bottomY], [rightX, bottomY], [tx, ty]], // Bottom Route
       [[sx, sy], [leftX, topY], [leftX, bottomY], [tx, ty]], // Left Route
-      [[sx, sy], [rightX, topY], [rightX, bottomY], [tx, ty]] // Right Route
+      [[sx, sy], [rightX, topY], [rightX, bottomY], [tx, ty]], // Right Route
+      [[sx, sy], [leftX, topY], [tx, ty]],
+      [[sx, sy], [rightX, topY], [tx, ty]],
+      [[sx, sy], [leftX, bottomY], [tx, ty]],
+      [[sx, sy], [rightX, bottomY], [tx, ty]],
     ];
 
     for (const route of candidateRoutes) {
-      if (!isPointInAnyObstacle(route[1][0], route[1][1], obstacles, 0.5) &&
-          !isPointInAnyObstacle(route[2][0], route[2][1], obstacles, 0.5)) {
-        return interpolateWaypoints(simplifyOrthogonalPath(route), 1.2);
+      const interp = interpolateWaypoints(simplifyOrthogonalPath(route), 1.2);
+      if (validateRouteSafety(interp, obstacles, margin * 0.4)) {
+        return interp;
       }
     }
   }
 
-  // Default fallback
-  return interpolateWaypoints([[sx, sy], [tx, ty]], 1.2);
+  // Hard safety guarantee: If no safe route exists, hold current position (NEVER enter NFZ)
+  console.warn(`[SAFETY_ALERT] No collision-free route could be found from (${sx}, ${sy}) to (${tx}, ${ty}). Holding position safely.`);
+  return [[sx, sy]];
 }
 
 /**
@@ -356,7 +400,10 @@ export function calculateSafeReturnPath(
 
   // 1. DIRECT PATH FIRST: If direct line to charging port is clear of NO-FLY zones, use direct straight route!
   if (isDirectPathClear([sx, sy], [cx, cy], obstacles, margin)) {
-    return interpolateWaypoints([[sx, sy], [cx, cy]], 1.0);
+    const directPath = interpolateWaypoints([[sx, sy], [cx, cy]], 1.0);
+    if (validateRouteSafety(directPath, obstacles, margin * 0.4)) {
+      return directPath;
+    }
   }
 
   // 2. CHECK CLEAN 2-SEGMENT (L-SHAPED) ORTHOGONAL DETOURS:
@@ -373,13 +420,16 @@ export function calculateSafeReturnPath(
     isDirectPathClear([sx, cy], [cx, cy], obstacles, margin);
 
   if (l1Clear && !l2Clear) {
-    return interpolateWaypoints([[sx, sy], [cx, sy], [cx, cy]], 1.0);
+    const p = interpolateWaypoints([[sx, sy], [cx, sy], [cx, cy]], 1.0);
+    if (validateRouteSafety(p, obstacles, margin * 0.4)) return p;
   }
   if (l2Clear && !l1Clear) {
-    return interpolateWaypoints([[sx, sy], [sx, cy], [cx, cy]], 1.0);
+    const p = interpolateWaypoints([[sx, sy], [sx, cy], [cx, cy]], 1.0);
+    if (validateRouteSafety(p, obstacles, margin * 0.4)) return p;
   }
   if (l1Clear && l2Clear) {
-    return interpolateWaypoints([[sx, sy], [cx, sy], [cx, cy]], 1.0);
+    const p = interpolateWaypoints([[sx, sy], [cx, sy], [cx, cy]], 1.0);
+    if (validateRouteSafety(p, obstacles, margin * 0.4)) return p;
   }
 
   // 3. MINIMAL CORNER DETOURS AROUND BLOCKING OBSTACLES:
@@ -453,10 +503,21 @@ export function calculateSafeReturnPath(
     };
 
     candidateRoutes.sort((a, b) => getPathLength(a) - getPathLength(b));
-    const bestRoute = candidateRoutes[0];
-    return interpolateWaypoints(simplifyOrthogonalPath(bestRoute), 1.0);
+    for (const bestRoute of candidateRoutes) {
+      const interp = interpolateWaypoints(simplifyOrthogonalPath(bestRoute), 1.0);
+      if (validateRouteSafety(interp, obstacles, margin * 0.4)) {
+        return interp;
+      }
+    }
   }
 
-  // 4. General fallback
-  return calculateSafeRoute([sx, sy], [cx, cy], obstacles, mapWidth, mapHeight, margin);
+  // 4. A* fallback
+  const aStarRoute = calculateSafeRoute([sx, sy], [cx, cy], obstacles, mapWidth, mapHeight, margin);
+  if (validateRouteSafety(aStarRoute, obstacles, margin * 0.4)) {
+    return aStarRoute;
+  }
+
+  // Hard safety fallback: Hold position
+  console.warn(`[SAFETY_ALERT] Charging station return path blocked by NO-FLY zone. Holding position safely.`);
+  return [[sx, sy]];
 }

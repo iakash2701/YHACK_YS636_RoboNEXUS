@@ -8,16 +8,16 @@ class PathPlanner:
         self.map_width = map_width
         self.map_height = map_height
 
-    def is_collision(self, x: int, y: int, obstacles: List[Dict[str, Any]]) -> bool:
-        """Checks if grid coordinate (x, y) is inside any rectangular obstacle or out of bounds."""
+    def is_collision(self, x: float, y: float, obstacles: List[Dict[str, Any]], margin: float = 0.5) -> bool:
+        """Checks if coordinate (x, y) is inside any rectangular obstacle (or within margin) or out of bounds."""
         if x < 0 or x >= self.map_width or y < 0 or y >= self.map_height:
             return True
         for obs in obstacles:
-            ox = obs.get("x", 0)
-            oy = obs.get("y", 0)
-            ow = obs.get("width", 0)
-            oh = obs.get("height", 0)
-            if ox <= x < ox + ow and oy <= y < oy + oh:
+            ox = obs.get("x", 0) - margin
+            oy = obs.get("y", 0) - margin
+            ow = obs.get("width", 0) + 2 * margin
+            oh = obs.get("height", 0) + 2 * margin
+            if ox <= x <= ox + ow and oy <= y <= oy + oh:
                 return True
         return False
 
@@ -105,8 +105,8 @@ class PathPlanner:
                     f_score = tentative_g + self.heuristic(neighbor, goal_node)
                     heapq.heappush(open_set, (f_score, tentative_g, neighbor))
 
-        # Fallback if no full path is found: return direct line
-        return [start, goal]
+        # Fallback if no full path is found: hold position safely
+        return [start]
 
     def _find_nearest_free(self, node: Tuple[int, int], obstacles: List[Dict[str, Any]]) -> Tuple[int, int]:
         for radius in range(1, 10):

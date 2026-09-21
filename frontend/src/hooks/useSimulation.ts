@@ -215,10 +215,11 @@ export function useSimulation() {
 
   // PREDICTIVE RISK ACKNOWLEDGEMENT HANDLER
   const handleAcknowledgePredictiveRisk = useCallback((robotId: string) => {
-    if (!missionState) return;
-    const updated = AutonomousDecisionEngine.acknowledgePredictiveRiskEvent(missionState, robotId);
-    setMissionState(updated);
-  }, [missionState]);
+    setMissionState(prev => {
+      if (!prev) return null;
+      return AutonomousDecisionEngine.acknowledgePredictiveRiskEvent(prev, robotId);
+    });
+  }, []);
 
   // ONE-TIME EMERGENCY LOW BATTERY ACKNOWLEDGEMENT HANDLER
   const handleAcknowledgeLowBattery = useCallback((robotId: string) => {
@@ -230,10 +231,11 @@ export function useSimulation() {
 
   // 1-Click Hackathon Demo Triggers
   const simulatePredictiveRiskDemo = () => {
-    if (!missionState) return;
     setIsPlaying(true);
-    const updated = AutonomousDecisionEngine.triggerDemoPredictiveRiskSurge(missionState);
-    setMissionState(updated);
+    setMissionState(prev => {
+      if (!prev) return null;
+      return AutonomousDecisionEngine.triggerDemoPredictiveRiskSurge(prev);
+    });
   };
 
   const simulateRobot1LowBattery = () => {
